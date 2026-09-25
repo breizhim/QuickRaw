@@ -230,13 +230,25 @@ table.meta td:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, mon
 #clipBtn .clip-hi { color: #ffb3c0; }
 #clipBtn .clip-lo { color: #b3cfff; }
 
-/* Filtres */
-.looks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+/* Filtres : bandeau défilant horizontalement */
+.looks {
+  position: relative; display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; margin: 0 -2px;
+  scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+.look-group {
+  flex: none; writing-mode: vertical-rl; transform: rotate(180deg); text-align: center;
+  font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-2);
+  border-left: 1px solid var(--line); padding-left: 4px; margin-left: 4px;
+}
+.look-group:first-child { border: 0; margin: 0; }
 .look {
-  display: flex; flex-direction: column; align-items: stretch; gap: 5px; padding: 5px; cursor: pointer;
+  flex: none; width: 92px; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 4px;
+  cursor: pointer; scroll-snap-align: center;
   background: var(--bg-3); border: 2px solid var(--line); border-radius: 10px; color: var(--text);
-  font: inherit; font-size: .82rem; touch-action: manipulation;
+  font: inherit; font-size: .76rem; line-height: 1.15; touch-action: manipulation;
 }
 .look canvas { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 6px; background: #000; display: block; }
+.look span { min-height: 2.3em; display: flex; align-items: center; justify-content: center; text-align: center; }
 .look.active { border-color: var(--accent); }
 .look.active span { color: var(--accent); font-weight: 600; }

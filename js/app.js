@@ -1,6 +1,6 @@
 import LibRaw from '../vendor/libraw/index.js';
 import {
-  DEFAULT_PARAMS, DEFAULT_GEOM, makeProcessor, processRGBA, orientedSize,
+  DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, orientedSize,
   inscribedCrop, cropInside, srgbDecode,
 } from './pipeline.js';
 import { renderedStats, suggestSettings, detectStraighten, SCOPE_GAIN } from './analysis.js';
@@ -648,16 +648,37 @@ function drawThumbs() {
 }
 function syncLookUI() {
   const { look, lookAmount } = state.params;
-  document.querySelectorAll('#lookChips .look').forEach((b) => b.classList.toggle('active', b.dataset.look === look));
+  document.querySelectorAll('#lookChips .look').forEach((b) => {
+    const on = b.dataset.look === look;
+    b.classList.toggle('active', on); b.setAttribute('aria-selected', String(on));
+    if (on) b.parentElement.scrollTo({ left: b.offsetLeft - b.parentElement.clientWidth / 2 + b.offsetWidth / 2, behavior: 'smooth' });
+  });
   $('#lookAmountRow').hidden = look === 'none';
   $('#lookAmount').value = lookAmount;
   $('#lookAmountOut').textContent = `${lookAmount} %`;
 }
-document.querySelectorAll('#lookChips .look').forEach((btn) => btn.addEventListener('click', () => {
-  if (state.params.look === btn.dataset.look) return;
-  state.params.look = btn.dataset.look;
-  lookChanged();
-}));
+// Bandeau des filtres, groupés (Couleur / Noir & blanc / Créatif)
+(function buildLookChips() {
+  const root = $('#lookChips');
+  let group = null;
+  for (const [key, lk] of Object.entries(LOOKS)) {
+    if (lk.group !== group) {
+      group = lk.group;
+      const g = document.createElement('div'); g.className = 'look-group'; g.textContent = group;
+      root.appendChild(g);
+    }
+    const btn = document.createElement('button');
+    btn.className = 'look'; btn.dataset.look = key; btn.setAttribute('role', 'option');
+    btn.innerHTML = '<canvas></canvas><span></span>';
+    btn.querySelector('span').textContent = lk.name;
+    btn.addEventListener('click', () => {
+      if (state.params.look === key) return;
+      state.params.look = key;
+      lookChanged();
+    });
+    root.appendChild(btn);
+  }
+})();
 let lookTimer = null;
 $('#lookAmount').addEventListener('input', (e) => {
   state.params.lookAmount = +e.target.value;

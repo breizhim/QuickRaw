@@ -16,11 +16,16 @@ envoyé sur un serveur, tout est traité sur l'appareil (ordinateur ou mobile).
   lumières), hautes lumières, ombres, blancs, noirs, contraste, vibrance,
   saturation, redressement. Chaque suggestion s'applique séparément, ou toutes
   d'un coup (« Tout appliquer »), puis s'affine avec les curseurs.
-- **Filtres** : *Sans filtre*, *Vivid* (dans l'esprit d'Adobe Vivid : contraste
-  et saturation renforcés, tons chair protégés) et *Velvia* (diapositive
-  Fujichrome : fort contraste, noirs denses, verts / jaunes luxuriants, bleus
-  profonds), avec vignettes d'aperçu et intensité réglable. Les suggestions sont
-  recalculées selon le filtre pour ne pas cumuler ses effets.
+- **Filtres** (bandeau de vignettes, intensité réglable) :
+  - *Couleur* : Provia (standard fidèle), Astia (douce, peaux flatteuses),
+    Vivid (esprit Adobe Vivid), Velvia (diapositive saturée et contrastée) ;
+  - *Noir & blanc* : Acros (modelé fin), Tri-X (reportage contrasté, filtre
+    jaune), N&B rouge (ciels sombres, nuages éclatants), Sépia (virage brun) ;
+  - *Créatif* : Cyberpunk jour (sarcelle / orange, verts virés au cyan) et
+    Cyberpunk nuit (néons magenta / cyan, ombres bleu-violet).
+  Les filtres combinent décalages de tons, saturation / luminance / décalage par
+  teinte, mélangeur N&B et virage partiel. Les suggestions sont recalculées selon
+  le filtre pour ne pas cumuler ses effets.
 - **Réglages** : température, teinte, exposition, contraste, hautes lumières,
   ombres, blancs, noirs, vibrance, saturation. Double-clic / double-tape sur un
   intitulé pour le remettre à zéro. Bouton *Avant / Après* (maintenir, ou touche

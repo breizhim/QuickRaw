@@ -124,10 +124,10 @@ export function suggestSettings(src, n, info = {}) {
   const neutral = { highlights, shadows, blacks, contrast, vibrance, saturation };
   let lookInfo = null;
   if (look && look.tone && la > 0) {
-    const lc = (look.tone.contrast || 0) * la, lb = -(look.tone.blacks || 0) * la, ls = (look.sat - 1) * 100 * la;
+    const lc = (look.tone.contrast || 0) * la, lb = -(look.tone.blacks || 0) * la, ls = ((look.sat || 1) - 1) * 100 * la;
     if (contrast > 0) contrast = Math.max(0, Math.round(contrast - lc));
     else if (contrast < 0 || std > 0.27) contrast = Math.round(Math.min(contrast, 0) - 0.4 * lc);
-    if (blacks < 0) blacks = Math.min(0, Math.round(blacks + lb));
+    if (blacks < 0) blacks = lb < 0 ? blacks : Math.min(0, Math.round(blacks + lb)); // noirs relevés = choix du filtre
     else if (blacks > 0 || blkFrac > 0.005) blacks = Math.round(blacks + 0.6 * lb);
     vibrance = Math.max(0, Math.round(vibrance - 0.8 * ls));
     if (msat > 0.42) saturation = Math.min(saturation, -Math.round(0.4 * ls));
@@ -135,9 +135,19 @@ export function suggestSettings(src, n, info = {}) {
     if (loFrac > 0.12) shadows = Math.round(shadows + 0.8 * lb + 0.2 * lc);
     highlights = clamp(highlights, -100, 100); shadows = clamp(shadows, -100, 100);
     blacks = clamp(blacks, -100, 100); contrast = clamp(contrast, -100, 100);
+    const parts = [];
+    if (lc) parts.push(`${lc > 0 ? 'du contraste' : 'de la douceur'} (${lc > 0 ? '+' : ''}${Math.round(lc)})`);
+    if (lb > 1) parts.push('des noirs plus denses'); else if (lb < -1) parts.push('des noirs relevés');
+    if (look.mono) {
+      parts.push('une conversion noir & blanc');
+      // en N&B, la couleur n'est plus visible : pas de balance des blancs, vibrance ni saturation
+      vibrance = 0; saturation = 0; temp = 0; tint = 0;
+    } else if (ls > 1) parts.push(`+${Math.round(ls)} % de saturation`);
+    if (look.hueShift) parts.push('des teintes décalées (virages néon)');
+    if (look.split) parts.push(`un virage ${look.mono ? 'coloré' : 'des ombres et hautes lumières'}`);
     lookInfo = {
-      id: 'look', title: `Filtre ${look.name}`, icon: '🎞️', set: null,
-      text: `Le filtre ajoute déjà du contraste (+${Math.round(lc)}), des noirs plus denses et +${Math.round(ls)} % de saturation. Les suggestions ci-dessous en tiennent compte pour ne pas cumuler les effets.`,
+      id: 'look', title: `Filtre ${look.name}`, icon: look.mono ? '🖤' : look.hueShift ? '🌆' : '🎞️', set: null,
+      text: `Le filtre apporte déjà ${parts.join(', ').replace(/, ([^,]*)$/, ' et $1')}. Les suggestions ci-dessous en tiennent compte pour ne pas cumuler les effets.`,
     };
   }
   const tuned = (k) => (lookInfo && neutral[k] !== { highlights, shadows, blacks, contrast, vibrance, saturation }[k] ? ' (ajusté pour le filtre)' : '');
