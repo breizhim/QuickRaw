@@ -8,6 +8,7 @@ import { readExif } from './metadata.js';
 import { suggestSettings, detectStraighten } from './analysis.js';
 import { DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, inscribedCrop } from './pipeline.js';
 import { exportJpeg } from './exporter.js';
+import { readLevel, levelAngle } from './level.js';
 import { ZipBuilder, crc32 } from './zip.js';
 
 const $ = (s) => document.querySelector(s);
@@ -222,10 +223,17 @@ export function initBatch({ getCurrent, toast }) {
         const geom = structuredClone(DEFAULT_GEOM);
         let note = '';
         if (opts.straighten) {
-          const st = detectStraighten(prev.data, prev.w, prev.h);
-          if (st.confidence > 6 && Math.abs(st.angle) >= 0.2 && Math.abs(st.angle) <= 15) {
-            geom.angle = st.angle; geom.crop = inscribedCrop(W, H, st.angle, W / H);
-            note = ` · redressé ${st.angle > 0 ? '+' : ''}${st.angle.toFixed(1).replace('.', ',')}°`;
+          // niveau électronique de l'appareil en priorité, sinon analyse de l'image
+          const lv = levelAngle(readLevel(exif));
+          let ang = null, src = '';
+          if (lv !== null) { ang = Math.abs(lv) >= 0.2 ? lv : null; src = ' (niveau)'; }
+          else {
+            const st = detectStraighten(prev.data, prev.w, prev.h);
+            if (st.confidence > 6 && Math.abs(st.angle) >= 0.2 && Math.abs(st.angle) <= 15) ang = st.angle;
+          }
+          if (ang !== null) {
+            geom.angle = ang; geom.crop = inscribedCrop(W, H, ang, W / H);
+            note = ` · redressé ${ang > 0 ? '+' : ''}${ang.toFixed(1).replace('.', ',')}°${src}`;
           }
         }
         drawThumb(row.canvas, prev, params, base);

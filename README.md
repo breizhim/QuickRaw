@@ -33,8 +33,11 @@ envoyé sur un serveur, tout est traité sur l'appareil (ordinateur ou mobile).
 - **Recadrage et rotation** : cadre en paysage ou en portrait, formats libre /
   original / 1:1 / 3:2 / 4:3 / 5:4 / 16:9 (2:3, 3:4… en portrait), rotation 90°, miroir, redressement fin ±45° ; le cadre
   reste toujours dans l'image redressée.
-- **Redressage automatique** : détection des lignes horizontales / verticales
-  dominantes (tenseur de structure + histogramme d'orientations).
+- **Redressage automatique** : utilise en priorité le **niveau électronique**
+  enregistré par l'appareil (maker notes Pentax / Ricoh GR III, GR IIIx, GR IV,
+  tag LevelInfo 0x022B) quand il est renseigné ; sinon détection des lignes
+  horizontales / verticales dominantes (tenseur de structure + histogramme
+  d'orientations).
 - **Ouverture rapide** : un premier décodage en demi-taille (sans dématriçage)
   permet d'éditer tout de suite ; le dématriçage AHD pleine résolution se fait
   en arrière-plan (indicateur en haut à droite de l'image).

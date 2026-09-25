@@ -7,6 +7,7 @@ import {
 } from './pipeline.js';
 import { renderedStats, suggestSettings, detectStraighten, SCOPE_GAIN } from './analysis.js';
 import { exportJpeg } from './exporter.js';
+import { readLevel, levelAngle } from './level.js';
 import { initBatch } from './batch.js';
 import { readExif, buildSections, renderSections, sectionsToJSON } from './metadata.js';
 
@@ -65,6 +66,7 @@ async function openFile(file) {
     // (avant LibRaw, qui transfère — et donc détache — le tampon vers son worker)
     const exif = await readExif(buf);
     const isStd = isStandardImage(buf);
+    const level = readLevel(exif); // niveau électronique de l'appareil (Ricoh GR, Pentax…)
     let data, width, height, raw = null, fullP, half = null;
     const loadId = ++state.loadId;
 
@@ -97,7 +99,7 @@ async function openFile(file) {
       file, exif, raw, SW: width, SH: height, preview: res.preview, full: null,
       params: { ...DEFAULT_PARAMS }, geom: structuredClone(DEFAULT_GEOM), aspect: null, autoCrop: true, portrait: height > width,
       base: { exposure: baselineExposure(raw) },
-      sections: null, clipWarn: false,
+      sections: null, clipWarn: false, level,
     });
     before.canvas = null;
     state.fullP = fullP
@@ -171,8 +173,15 @@ function fixExposureSuggestion() {
 }
 
 function addStraightSuggestion() {
-  const st = state.straight;
-  if (st && Math.abs(st.angle) >= 0.2 && Math.abs(st.angle) <= 15 && st.confidence > 6) {
+  const lv = levelAngle(state.level), st = state.straight;
+  if (lv !== null) {
+    // mesure de l'appareil : prioritaire sur l'analyse d'image
+    if (Math.abs(lv) >= 0.2) state.analysis.suggestions.push({
+      id: 'straight', title: 'Horizon (niveau de l\'appareil)', icon: '📐',
+      text: `Le niveau électronique a mesuré une inclinaison de ${fmtSigned(lv, 1)}° au déclenchement. Redresser de ${fmtSigned(lv, 1)}°.`,
+      geom: { angle: lv },
+    });
+  } else if (st && Math.abs(st.angle) >= 0.2 && Math.abs(st.angle) <= 15 && st.confidence > 6) {
     state.analysis.suggestions.push({
       id: 'straight', title: 'Horizon / verticales', icon: '📐',
       text: `Les lignes dominantes sont inclinées de ${fmtSigned(-st.angle, 1)}°. Redresser de ${fmtSigned(st.angle, 1)}°.`,
@@ -847,6 +856,13 @@ $('#cropReset').addEventListener('click', () => {
   setAspectChip('free'); $('#flipH').classList.remove('active'); setAngle(0); renderSuggestions();
 });
 $('#autoStraight').addEventListener('click', () => {
+  const lv = levelAngle(state.level);
+  if (lv !== null) {
+    const a = state.geom.flipH ? -lv : lv;
+    setAngle(a); renderSuggestions();
+    $('#straightInfo').textContent = `Redressé de ${fmtSigned(a, 1)}° d'après le niveau électronique de l'appareil (mesure au déclenchement, précision 0,5°).`;
+    return;
+  }
   const st = state.straight;
   if (!st) return;
   const a = state.geom.flipH ? -st.angle : st.angle;
@@ -883,7 +899,7 @@ window.addEventListener('keyup', (e) => { if (e.key === '\\') setBefore(false); 
 
 // ---------------------------------------------------------------- métadonnées
 $('#metaBtn').addEventListener('click', () => {
-  if (!state.sections) state.sections = buildSections(state.file, state.exif, state.raw, { size: `${state.SW} × ${state.SH}` });
+  if (!state.sections) state.sections = buildSections(state.file, state.exif, state.raw, { size: `${state.SW} × ${state.SH}`, level: state.level });
   $('#metaSearch').value = '';
   renderSections($('#metaBody'), state.sections);
   $('#metaDialog').showModal();

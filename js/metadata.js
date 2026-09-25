@@ -1,5 +1,6 @@
 // Lecture et présentation de toutes les métadonnées (exifr + LibRaw).
 import exifr from '../vendor/exifr/exifr.mjs';
+import { describeLevel } from './level.js';
 
 // Noms des balises DNG / TIFF-EP qu'exifr ne connaît pas
 const DNG_TAGS = {
@@ -129,6 +130,7 @@ export function buildSections(file, exif, raw, extra = {}) {
     push('Version DNG', raw.dng_version ? dngVersion(raw.dng_version) : '');
     push('Motif du capteur', raw.cdesc);
     push('Orientation (flip)', raw.flip);
+    if (extra.level) push('Niveau électronique', describeLevel(extra.level));
     push('Logiciel', raw.software);
     push('Auteur', raw.artist);
     push('Description', raw.desc);
