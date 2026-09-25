@@ -132,8 +132,8 @@ export function buildSections(file, exif, raw, extra = {}) {
     push('Logiciel', raw.software);
     push('Auteur', raw.artist);
     push('Description', raw.desc);
-    const bl = raw.color_data?.dng_levels?.baseline_exposure;
-    if (bl) push('Exposition de base DNG', `${bl > 0 ? '+' : ''}${bl} IL`);
+    const bl = raw.dng_version ? raw.color_data?.dng_levels?.baseline_exposure : 0;
+    if (bl && Math.abs(bl) <= 10) push('Exposition de base DNG', `${bl > 0 ? '+' : ''}${bl} IL`);
     const cm = raw.color_data?.cam_mul;
     if (cm) push('Balance des blancs boîtier (R, V, B, V2)', cm.map((x) => +(+x).toFixed(4)).join(', '));
   } else if (extra.size) push('Dimensions', extra.size);

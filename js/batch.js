@@ -3,7 +3,7 @@
 // Sorties : dossier (File System Access, ordinateur), archive ZIP découpée en
 // parties, ou partage (feuille de partage mobile → « Enregistrer dans Photos »).
 import { engine } from './engine.js';
-import { isStandardImage, decodeFull, decodeStandard, exportExifFields } from './decode.js';
+import { isStandardImage, decodeFull, decodeStandard, exportExifFields, baselineExposure } from './decode.js';
 import { readExif } from './metadata.js';
 import { suggestSettings, detectStraighten } from './analysis.js';
 import { DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, inscribedCrop } from './pipeline.js';
@@ -210,7 +210,7 @@ export function initBatch({ getCurrent, toast }) {
         const { width: W, height: H } = dec;
         const sp = await engine.call({ type: 'sharePreview', data: dec.data, width: W, height: H, previewMax: 1200 }, [dec.data.buffer]);
         dec.data = null;
-        const prev = sp.preview, base = { exposure: dec.raw?.color_data?.dng_levels?.baseline_exposure || 0 };
+        const prev = sp.preview, base = { exposure: baselineExposure(dec.raw) };
         let params;
         if (opts.mode === 'sync') params = { ...opts.syncParams, look: opts.look, lookAmount: opts.lookAmount };
         else {

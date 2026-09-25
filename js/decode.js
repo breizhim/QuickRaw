@@ -61,6 +61,13 @@ function exifDate(raw, exif) {
   return `${d.getFullYear()}:${p(d.getMonth() + 1)}:${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+// Exposition de base (BaselineExposure) : n'existe que dans les DNG.
+// Pour les autres RAW, LibRaw renvoie une valeur sentinelle (-999).
+export function baselineExposure(raw) {
+  const v = raw?.color_data?.dng_levels?.baseline_exposure;
+  return raw?.dng_version && Number.isFinite(v) && Math.abs(v) <= 10 ? v : 0;
+}
+
 // Champs EXIF recopiés dans le JPG exporté
 export function exportExifFields(raw, exif) {
   const r = raw || {};

@@ -1,6 +1,6 @@
 import LibRaw from '../vendor/libraw/index.js';
 import { engine } from './engine.js';
-import { RAW_SETTINGS, isStandardImage, toRGB16, decodeStandard, decodeFull, exportExifFields } from './decode.js';
+import { RAW_SETTINGS, isStandardImage, toRGB16, decodeStandard, decodeFull, exportExifFields, baselineExposure } from './decode.js';
 import {
   DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, orientedSize,
   inscribedCrop, cropInside, srgbDecode,
@@ -96,7 +96,7 @@ async function openFile(file) {
     Object.assign(state, {
       file, exif, raw, SW: width, SH: height, preview: res.preview, full: null,
       params: { ...DEFAULT_PARAMS }, geom: structuredClone(DEFAULT_GEOM), aspect: null, autoCrop: true, portrait: height > width,
-      base: { exposure: raw?.color_data?.dng_levels?.baseline_exposure || 0 },
+      base: { exposure: baselineExposure(raw) },
       sections: null, clipWarn: false,
     });
     before.canvas = null;
