@@ -7,14 +7,18 @@ self.onmessage = ({ data: msg }) => {
     if (msg.type === 'preview') {
       const prev = makePreview(msg.data, msg.width, msg.height, msg.previewMax);
       self.postMessage({ id: msg.id, ok: true, preview: prev }, [prev.data.buffer]);
-    } else if (msg.type === 'share') {
+    } else if (msg.type === 'share' || msg.type === 'sharePreview') {
       let data = msg.data;
       if (typeof SharedArrayBuffer !== 'undefined' && self.crossOriginIsolated) {
         const shared = new Uint16Array(new SharedArrayBuffer(data.byteLength));
         shared.set(data);
         data = shared;
       }
-      self.postMessage({ id: msg.id, ok: true, data });
+      // sharePreview (traitement par lot) : copie partagée + aperçu réduit en un seul aller-retour
+      if (msg.type === 'sharePreview') {
+        const prev = makePreview(data, msg.width, msg.height, msg.previewMax);
+        self.postMessage({ id: msg.id, ok: true, data, preview: prev }, [prev.data.buffer]);
+      } else self.postMessage({ id: msg.id, ok: true, data });
     }
   } catch (e) {
     self.postMessage({ id: msg.id, ok: false, error: String(e && e.message || e) });

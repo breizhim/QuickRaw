@@ -1,10 +1,13 @@
 import LibRaw from '../vendor/libraw/index.js';
+import { engine } from './engine.js';
+import { RAW_SETTINGS, isStandardImage, toRGB16, decodeStandard, decodeFull, exportExifFields } from './decode.js';
 import {
   DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, orientedSize,
   inscribedCrop, cropInside, srgbDecode,
 } from './pipeline.js';
 import { renderedStats, suggestSettings, detectStraighten, SCOPE_GAIN } from './analysis.js';
 import { exportJpeg } from './exporter.js';
+import { initBatch } from './batch.js';
 import { readExif, buildSections, renderSections, sectionsToJSON } from './metadata.js';
 
 const $ = (s) => document.querySelector(s);
@@ -30,23 +33,6 @@ const state = {
   sections: null,
 };
 
-// ---------------------------------------------------------------- moteur (worker)
-const engine = (() => {
-  const w = new Worker(new URL('./engine-worker.js', import.meta.url), { type: 'module' });
-  let id = 0; const pending = new Map(); let onProgress = null;
-  w.onmessage = ({ data }) => {
-    if (data.type === 'progress') { onProgress && onProgress(data.value); return; }
-    const p = pending.get(data.id); if (!p) return;
-    pending.delete(data.id);
-    data.ok ? p.resolve(data) : p.reject(new Error(data.error));
-  };
-  w.onerror = (e) => { for (const p of pending.values()) p.reject(new Error(e.message || 'Erreur du worker')); pending.clear(); };
-  const call = (msg, transfer = [], progress = null) => new Promise((resolve, reject) => {
-    const i = ++id; pending.set(i, { resolve, reject }); onProgress = progress;
-    w.postMessage({ ...msg, id: i }, transfer);
-  });
-  return { call };
-})();
 
 // ---------------------------------------------------------------- UI utilitaires
 function busy(text, progress = null) {
@@ -66,7 +52,6 @@ const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeou
 const fmtSigned = (v, d = 0) => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(d).replace('.', ',');
 
 // ---------------------------------------------------------------- ouverture
-const STD_MAGIC = [[0xff, 0xd8, 0xff], [0x89, 0x50, 0x4e, 0x47], [0x52, 0x49, 0x46, 0x46], [0x47, 0x49, 0x46]];
 
 async function openFile(file) {
   if (!file) return;
@@ -79,8 +64,7 @@ async function openFile(file) {
     const buf = await file.arrayBuffer();
     // (avant LibRaw, qui transfère — et donc détache — le tampon vers son worker)
     const exif = await readExif(buf);
-    const head = new Uint8Array(buf, 0, 8);
-    const isStd = STD_MAGIC.some((m) => m.every((b, i) => head[i] === b));
+    const isStd = isStandardImage(buf);
     let data, width, height, raw = null, fullP, half = null;
     const loadId = ++state.loadId;
 
@@ -157,20 +141,7 @@ async function openFile(file) {
 
 const round2 = (v) => Math.round(v * 100) / 100;
 
-const RAW_SETTINGS = {
-  outputBps: 16, gamm: [1, 1], noAutoBright: true, useCameraWb: true,
-  outputColor: 1, userQual: 3, highlight: 0,
-};
 
-async function decodeFull(buf) {
-  const lr = new LibRaw();
-  try {
-    await lr.open(new Uint8Array(buf), RAW_SETTINGS);
-    const img = await lr.imageData();
-    if (!img || !img.data) throw new Error('Décodage impossible');
-    return { data: toRGB16(img), width: img.width, height: img.height };
-  } finally { lr.dispose(); }
-}
 
 // Indicateur discret du dématriçage en arrière-plan
 function setFullStatus(text) {
@@ -210,32 +181,7 @@ function addStraightSuggestion() {
   }
 }
 
-function toRGB16(img) {
-  const { width: w, height: h, colors, bits } = img;
-  let d = img.data;
-  if (bits === 8) { const o = new Uint16Array(d.length); const lut = linLut8(); for (let i = 0; i < d.length; i++) o[i] = lut[d[i]]; d = o; }
-  if (!(d instanceof Uint16Array)) d = new Uint16Array(d.buffer, d.byteOffset, d.byteLength / 2);
-  if (colors === 3) return d;
-  const out = new Uint16Array(w * h * 3);
-  for (let i = 0, n = w * h; i < n; i++) {
-    const v = d[i * colors];
-    out[i * 3] = v; out[i * 3 + 1] = colors > 1 ? d[i * colors + 1] : v; out[i * 3 + 2] = colors > 2 ? d[i * colors + 2] : v;
-  }
-  return out;
-}
-function linLut8() { const t = new Uint16Array(256); for (let i = 0; i < 256; i++) t[i] = Math.round(srgbDecode(i / 255) * 65535); return t; }
 
-// JPEG / PNG / WebP : décodage navigateur puis linéarisation
-async function decodeStandard(file) {
-  const bmp = await createImageBitmap(file);
-  const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
-  const ctx = c.getContext('2d'); ctx.drawImage(bmp, 0, 0);
-  const px = ctx.getImageData(0, 0, c.width, c.height).data;
-  const n = c.width * c.height, out = new Uint16Array(n * 3), lut = linLut8();
-  for (let i = 0; i < n; i++) { out[i * 3] = lut[px[i * 4]]; out[i * 3 + 1] = lut[px[i * 4 + 1]]; out[i * 3 + 2] = lut[px[i * 4 + 2]]; }
-  bmp.close?.();
-  return { data: out, width: c.width, height: c.height };
-}
 
 function infoText() {
   const r = state.raw;
@@ -957,23 +903,10 @@ $('#metaCopy').addEventListener('click', async () => {
 const baseName = () => (state.file?.name || 'image').replace(/\.[^.]+$/, '');
 let lastExportUrl = null, lastExportFile = null;
 
-function exifDate() {
-  const d = state.exif?.exif?.DateTimeOriginal || (state.raw?.timestamp instanceof Date ? state.raw.timestamp : null);
-  if (!(d instanceof Date) || isNaN(d)) return undefined;
-  // exifr interprète la date EXIF comme locale : on la ré-écrit à l'identique
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}:${p(d.getMonth() + 1)}:${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
 
 $('#exportBtn').addEventListener('click', async () => {
   if (!state.preview) return;
-  const r = state.raw || {};
-  const exif = {
-    make: r.camera_make || state.exif?.ifd0?.Make, model: r.camera_model || state.exif?.ifd0?.Model,
-    software: 'QuickRaw', dateTime: exifDate(), exposureTime: r.shutter, fNumber: r.aperture,
-    iso: r.iso_speed, focalLength: r.focal_len, lensModel: r.lens?.Lens || state.exif?.exif?.LensModel,
-    artist: r.artist, description: r.desc,
-  };
+  const exif = exportExifFields(state.raw, state.exif);
   try {
     const t0 = performance.now();
     if (!state.full) {
@@ -1007,12 +940,20 @@ $('#exportShare').addEventListener('click', async () => {
 
 // ---------------------------------------------------------------- entrées fichier
 for (const id of ['#fileInput', '#fileInput2']) {
-  $(id).addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; openFile(f); });
+  $(id).addEventListener('change', (e) => {
+    const list = [...e.target.files]; e.target.value = '';
+    if (list.length > 1) batch.open(list); // plusieurs fichiers : traitement par lot
+    else openFile(list[0]);
+  });
 }
 const viewer = $('#viewer'), dz = $('#dropzone');
 viewer.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag'); });
 viewer.addEventListener('dragleave', () => dz.classList.remove('drag'));
-viewer.addEventListener('drop', (e) => { e.preventDefault(); dz.classList.remove('drag'); openFile(e.dataTransfer.files[0]); });
+viewer.addEventListener('drop', (e) => {
+  e.preventDefault(); dz.classList.remove('drag');
+  const list = [...e.dataTransfer.files];
+  if (list.length > 1) batch.open(list); else openFile(list[0]);
+});
 
 if (!window.crossOriginIsolated) {
   const w = $('#coiWarn');
@@ -1023,4 +964,12 @@ if (!window.crossOriginIsolated) {
 }
 
 buildSliders();
+
+// ---------------------------------------------------------------- traitement par lot
+const batch = initBatch({
+  getCurrent: () => (state.preview ? { params: state.params } : null),
+  toast,
+});
+$('#batchBtn').addEventListener('click', () => batch.open());
+$('#batchBtn2').addEventListener('click', () => batch.open());
 window.quickraw = { state, openFile, get view() { return view; } }; // pratique pour le débogage

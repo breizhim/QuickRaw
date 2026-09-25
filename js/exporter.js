@@ -32,9 +32,7 @@ export async function exportJpeg({ full, params, base, geom, quality = 100, exif
       wk.postMessage({ data, SW, SH, params, base, geom, quality, s0, s1, totalStrips });
     }));
   }
-  const parts = await Promise.all(bands);
-  return {
-    blob: new Blob([...head, ...parts.flat(), new Uint8Array([0xff, 0xd9])], { type: 'image/jpeg' }),
-    outW, outH, workers: n,
-  };
+  const bandChunks = await Promise.all(bands);
+  const parts = [...head, ...bandChunks.flat(), new Uint8Array([0xff, 0xd9])];
+  return { blob: new Blob(parts, { type: 'image/jpeg' }), parts, outW, outH, workers: n };
 }

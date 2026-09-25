@@ -44,6 +44,14 @@ envoyé sur un serveur, tout est traité sur l'appareil (ordinateur ou mobile).
   `SharedArrayBuffer`), sans passer par un canvas (limité en taille sur mobile). Les
   principales données EXIF (appareil, objectif, date, vitesse, ouverture, ISO,
   focale) sont recopiées. Sur mobile, bouton *Partager / Enregistrer*.
+- **Traitement par lot** (bouton *Lot*, ou sélection / glisser-déposer de
+  plusieurs fichiers) : filtre + suggestions automatiques photo par photo, ou
+  réglages de la photo ouverte appliqués à toute la série ; redressage
+  automatique en option. Sorties : dossier (Chrome / Edge sur ordinateur, chaque
+  JPG écrit dès qu'il est prêt), archive ZIP (découpée en parties ; sur mobile
+  le traitement attend que chaque partie soit récupérée pour limiter la
+  mémoire), ou partage par groupes de 10 (« Enregistrer dans Photos » sur
+  téléphone). L'écran est maintenu allumé pendant le traitement.
 - **Toutes les métadonnées** : bouton *Métadonnées* (IFD0, EXIF, GPS, XMP, IPTC,
   ICC, balises DNG, données techniques LibRaw…), avec filtre et copie JSON.
 - **Mobile** : mise en page adaptée (panneau sous l'image en portrait, à droite
@@ -77,6 +85,8 @@ chargement. HTTPS est requis (sauf `localhost`).
 | `js/analysis.js` | Statistiques, suggestions, redressage automatique |
 | `js/engine-worker.js` | Aperçu réduit, copie de l'image en mémoire partagée |
 | `js/exporter.js`, `js/export-worker.js` | Export JPEG parallèle par bandes |
+| `js/batch.js`, `js/zip.js` | Traitement par lot, archives ZIP |
+| `js/decode.js`, `js/engine.js` | Décodage des fichiers, accès au worker moteur |
 | `js/jpeg-encoder.js` | Encodeur JPEG baseline + écriture EXIF |
 | `js/metadata.js` | Lecture (exifr + LibRaw) et affichage des métadonnées |
 | `coi-sw.js` | Service worker COOP/COEP |
