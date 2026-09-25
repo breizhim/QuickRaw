@@ -4,6 +4,7 @@ import {
   inscribedCrop, cropInside, srgbDecode,
 } from './pipeline.js';
 import { renderedStats, suggestSettings, detectStraighten, SCOPE_GAIN } from './analysis.js';
+import { exportJpeg } from './exporter.js';
 import { readExif, buildSections, renderSections, sectionsToJSON } from './metadata.js';
 
 const $ = (s) => document.querySelector(s);
@@ -20,6 +21,7 @@ const state = {
   geom: structuredClone(DEFAULT_GEOM),
   aspect: null,               // null = libre, sinon rapport l/h en pixels
   aspectKey: 'free', portrait: false,
+  loadId: 0, full: null, fullP: null, // image pleine résolution (SharedArrayBuffer) et sa promesse
   autoCrop: true,             // recadrage piloté automatiquement (non modifié à la main)
   analysis: null,             // résultat de suggestSettings
   straight: null,             // { angle, confidence }
@@ -79,37 +81,57 @@ async function openFile(file) {
     const exif = await readExif(buf);
     const head = new Uint8Array(buf, 0, 8);
     const isStd = STD_MAGIC.some((m) => m.every((b, i) => head[i] === b));
-    let data, width, height, raw = null;
+    let data, width, height, raw = null, fullP, half = null;
+    const loadId = ++state.loadId;
 
     if (isStd) {
       busy('Décodage de l\'image…');
       ({ data, width, height } = await decodeStandard(file));
+      fullP = Promise.resolve({ data, width, height });
     } else {
-      busy('Décodage du RAW (LibRaw)…');
+      // 1) Décodage rapide en demi-taille (sans dématriçage) pour éditer tout de suite
+      busy('Décodage du RAW (aperçu rapide)…');
       const lr = new LibRaw();
       try {
-        await lr.open(new Uint8Array(buf), {
-          outputBps: 16, gamm: [1, 1], noAutoBright: true, useCameraWb: true,
-          outputColor: 1, userQual: 3, highlight: 0,
-        });
+        await lr.open(new Uint8Array(buf.slice(0)), { ...RAW_SETTINGS, halfSize: true });
         raw = await lr.metadata(true);
-        busy('Dématriçage…');
         const img = await lr.imageData();
         if (!img || !img.data) throw new Error('Décodage impossible');
-        ({ width, height } = img);
         data = toRGB16(img);
+        // dimensions pleine résolution (le demi-format est exactement la moitié)
+        width = img.width * 2; height = img.height * 2;
+        half = { w: img.width, h: img.height };
       } finally { lr.dispose(); }
+      // 2) Dématriçage pleine résolution en arrière-plan (nécessaire pour l'export)
+      fullP = decodeFull(buf);
     }
 
     busy('Préparation de l\'aperçu…');
-    const res = await engine.call({ type: 'load', data, width, height, previewMax: PREVIEW_MAX }, [data.buffer]);
+    const pw = half ? half.w : width, ph = half ? half.h : height;
+    const res = await engine.call({ type: 'preview', data, width: pw, height: ph, previewMax: PREVIEW_MAX }, isStd ? [] : [data.buffer]);
     Object.assign(state, {
-      file, exif, raw, SW: width, SH: height, preview: res.preview,
+      file, exif, raw, SW: width, SH: height, preview: res.preview, full: null,
       params: { ...DEFAULT_PARAMS }, geom: structuredClone(DEFAULT_GEOM), aspect: null, autoCrop: true, portrait: height > width,
       base: { exposure: raw?.color_data?.dng_levels?.baseline_exposure || 0 },
       sections: null, clipWarn: false,
     });
     before.canvas = null;
+    state.fullP = fullP
+      .then(async (f) => {
+        const sh = await engine.call({ type: 'share', data: f.data }, [f.data.buffer]);
+        if (loadId !== state.loadId) return null;
+        state.full = { data: sh.data, w: f.width, h: f.height };
+        state.SW = f.width; state.SH = f.height;
+        setFullStatus('');
+        return state.full;
+      })
+      .catch((e) => {
+        if (loadId !== state.loadId) return null;
+        setFullStatus('Échec du dématriçage pleine résolution');
+        throw e;
+      });
+    state.fullP.catch(() => {});
+    if (!isStd) setFullStatus('Dématriçage pleine résolution…');
 
     busy('Analyse colorimétrique…');
     await nextFrame();
@@ -137,6 +159,27 @@ async function openFile(file) {
 }
 
 const round2 = (v) => Math.round(v * 100) / 100;
+
+const RAW_SETTINGS = {
+  outputBps: 16, gamm: [1, 1], noAutoBright: true, useCameraWb: true,
+  outputColor: 1, userQual: 3, highlight: 0,
+};
+
+async function decodeFull(buf) {
+  const lr = new LibRaw();
+  try {
+    await lr.open(new Uint8Array(buf), RAW_SETTINGS);
+    const img = await lr.imageData();
+    if (!img || !img.data) throw new Error('Décodage impossible');
+    return { data: toRGB16(img), width: img.width, height: img.height };
+  } finally { lr.dispose(); }
+}
+
+// Indicateur discret du dématriçage en arrière-plan
+function setFullStatus(text) {
+  const el = $('#fullStatus');
+  el.textContent = text; el.hidden = !text;
+}
 
 function fixExposureSuggestion() {
   const s = state.analysis.suggestions.find((x) => x.id === 'exp');
@@ -808,19 +851,23 @@ $('#exportBtn').addEventListener('click', async () => {
     artist: r.artist, description: r.desc,
   };
   try {
-    busy('Export JPG pleine résolution…', 0);
     const t0 = performance.now();
-    const res = await engine.call(
-      { type: 'export', params: state.params, base: state.base, geom: state.geom, quality: 100, exif },
-      [], (v) => busy(`Export JPG pleine résolution… ${Math.round(v * 100)} %`, v));
+    if (!state.full) {
+      busy('Dématriçage pleine résolution en cours…');
+      await state.fullP;
+    }
+    busy('Export JPG pleine résolution…', 0);
+    const res = await exportJpeg({
+      full: state.full, params: state.params, base: state.base, geom: state.geom, quality: 100, exif,
+      onProgress: (v) => busy(`Export JPG pleine résolution… ${Math.round(v * 100)} %`, v),
+    });
     busy(false);
     const blob = res.blob;
     if (lastExportUrl) URL.revokeObjectURL(lastExportUrl);
     lastExportUrl = URL.createObjectURL(blob);
     const name = baseName() + '.jpg';
     lastExportFile = new File([blob], name, { type: 'image/jpeg' });
-    const [OW, OH] = orientedDims(), c = state.geom.crop;
-    $('#exportInfo').textContent = `${name} — ${Math.round(c.w * OW)} × ${Math.round(c.h * OH)} px, qualité 100 %, ${(blob.size / 1048576).toFixed(1)} Mo (${((performance.now() - t0) / 1000).toFixed(1)} s).`;
+    $('#exportInfo').textContent = `${name} — ${res.outW} × ${res.outH} px, qualité 100 %, ${(blob.size / 1048576).toFixed(1)} Mo (${((performance.now() - t0) / 1000).toFixed(1)} s).`;
     const dl = $('#exportDownload'); dl.href = lastExportUrl; dl.download = name;
     $('#exportShare').hidden = !(navigator.canShare && navigator.canShare({ files: [lastExportFile] }));
     $('#exportDialog').showModal();

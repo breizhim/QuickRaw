@@ -120,20 +120,22 @@ export class JpegEncoder {
   /**
    * @param {number} width
    * @param {number} height
-   * @param {{quality?:number, exif?:Uint8Array|null}} opts
+   * @param {{quality?:number, exif?:Uint8Array|null, headers?:boolean, restartInterval?:number}} opts
+   *   headers=false : n'écrit que les données entropiques (encodage d'une bande en parallèle)
+   *   restartInterval : nombre de MCU entre marqueurs RST (segment DRI)
    */
   constructor(width, height, opts = {}) {
     this.w = width; this.h = height;
     this.q = quantTables(opts.quality ?? 100);
-    this.out = new ByteWriter();
+    this.out = new ByteWriter(opts.headers === false ? 1 << 20 : 1 << 22);
     this.bitBuf = 0; this.bitCnt = 0;
     this.dcY = 0; this.dcU = 0; this.dcV = 0;
     this.blkY = new Float64Array(64); this.blkU = new Float64Array(64); this.blkV = new Float64Array(64);
     this.qout = new Int32Array(64);
-    this.writeHeaders(opts.exif || null);
+    if (opts.headers !== false) this.writeHeaders(opts.exif || null, opts.restartInterval || 0);
   }
 
-  writeHeaders(exif) {
+  writeHeaders(exif, restartInterval = 0) {
     const o = this.out;
     o.word(0xffd8); // SOI
     // APP0 JFIF
@@ -156,6 +158,8 @@ export class JpegEncoder {
     const dht = (cls, nr, vals) => { o.byte(cls); for (let i = 1; i <= 16; i++) o.byte(nr[i]); o.bytes(vals); };
     dht(0x00, DC_L_NRCODES, DC_L_VALUES); dht(0x10, AC_L_NRCODES, AC_L_VALUES);
     dht(0x01, DC_C_NRCODES, DC_C_VALUES); dht(0x11, AC_C_NRCODES, AC_C_VALUES);
+    // DRI
+    if (restartInterval) { o.word(0xffdd); o.word(4); o.word(restartInterval); }
     // SOS
     o.word(0xffda); o.word(12); o.byte(3);
     o.byte(1); o.byte(0x00); o.byte(2); o.byte(0x11); o.byte(3); o.byte(0x11);
@@ -270,12 +274,26 @@ export class JpegEncoder {
     }
   }
 
-  finish() {
+  padBits() {
     if (this.bitCnt > 0) this.writeBits((1 << (8 - this.bitCnt)) - 1, 8 - this.bitCnt); // bourrage à 1
-    this.out.word(0xffd9); // EOI
+  }
+
+  // Marqueur de reprise RSTn : aligne sur l'octet et remet à zéro les prédicteurs DC
+  restart(n) {
+    this.padBits();
+    this.out.byte(0xff); this.out.byte(0xd0 + (n & 7));
+    this.dcY = this.dcU = this.dcV = 0;
+  }
+
+  finish(eoi = true) {
+    this.padBits();
+    if (eoi) this.out.word(0xffd9); // EOI
     this.out.flush();
     return this.out.chunks;
   }
+
+  // Octets écrits jusqu'ici (en-têtes seuls si aucune bande encodée)
+  takeBytes() { this.out.flush(); const c = this.out.chunks; this.out.chunks = []; return c; }
 }
 
 const ZIG_INV = (() => { const z = new Int32Array(64); for (let i = 0; i < 64; i++) z[ZIGZAG[i]] = i; return z; })();

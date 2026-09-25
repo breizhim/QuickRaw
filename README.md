@@ -25,9 +25,13 @@ envoyé sur un serveur, tout est traité sur l'appareil (ordinateur ou mobile).
   reste toujours dans l'image redressée.
 - **Redressage automatique** : détection des lignes horizontales / verticales
   dominantes (tenseur de structure + histogramme d'orientations).
+- **Ouverture rapide** : un premier décodage en demi-taille (sans dématriçage)
+  permet d'éditer tout de suite ; le dématriçage AHD pleine résolution se fait
+  en arrière-plan (indicateur en haut à droite de l'image).
 - **Export JPG qualité 100 %, pleine résolution** (aucune mise à l'échelle) :
-  encodeur JPEG en JavaScript (4:4:4, tables de quantification à 1) exécuté dans
-  un worker, pour contourner la limite de taille des canvas sur mobile. Les
+  encodeur JPEG en JavaScript (4:4:4, tables de quantification à 1), parallélisé
+  sur tous les cœurs (bandes séparées par des marqueurs RST, image partagée via
+  `SharedArrayBuffer`), sans passer par un canvas (limité en taille sur mobile). Les
   principales données EXIF (appareil, objectif, date, vitesse, ouverture, ISO,
   focale) sont recopiées. Sur mobile, bouton *Partager / Enregistrer*.
 - **Toutes les métadonnées** : bouton *Métadonnées* (IFD0, EXIF, GPS, XMP, IPTC,
@@ -61,7 +65,8 @@ chargement. HTTPS est requis (sauf `localhost`).
 | `js/app.js` | Logique de l'interface, vue, recadrage interactif, histogrammes |
 | `js/pipeline.js` | Pipeline de développement (partagé aperçu / export) et géométrie |
 | `js/analysis.js` | Statistiques, suggestions, redressage automatique |
-| `js/engine-worker.js` | Image pleine résolution, aperçu réduit, export |
+| `js/engine-worker.js` | Aperçu réduit, copie de l'image en mémoire partagée |
+| `js/exporter.js`, `js/export-worker.js` | Export JPEG parallèle par bandes |
 | `js/jpeg-encoder.js` | Encodeur JPEG baseline + écriture EXIF |
 | `js/metadata.js` | Lecture (exifr + LibRaw) et affichage des métadonnées |
 | `coi-sw.js` | Service worker COOP/COEP |
