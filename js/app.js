@@ -155,6 +155,7 @@ function setFullStatus(text) {
 function computeAnalysis() {
   const p = state.preview;
   state.analysis = suggestSettings(p.data, p.w * p.h, {
+    w: p.w, h: p.h,
     iso: state.raw?.iso_speed, look: state.params.look, lookAmount: state.params.lookAmount,
   });
   // L'analyse est faite sans exposition de base : on la retranche de la suggestion

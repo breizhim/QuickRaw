@@ -215,7 +215,7 @@ export function initBatch({ getCurrent, toast }) {
         let params;
         if (opts.mode === 'sync') params = { ...opts.syncParams, look: opts.look, lookAmount: opts.lookAmount };
         else {
-          const a = suggestSettings(prev.data, prev.w * prev.h, { iso: dec.raw?.iso_speed, look: opts.look, lookAmount: opts.lookAmount }).auto;
+          const a = suggestSettings(prev.data, prev.w * prev.h, { w: prev.w, h: prev.h, iso: dec.raw?.iso_speed, look: opts.look, lookAmount: opts.lookAmount }).auto;
           a.exposure = round2(a.exposure - base.exposure);
           if (Math.abs(a.exposure) < 0.1) a.exposure = 0;
           params = { ...DEFAULT_PARAMS, ...a, look: opts.look, lookAmount: opts.lookAmount };

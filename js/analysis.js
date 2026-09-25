@@ -67,28 +67,65 @@ export function suggestSettings(src, n, info = {}) {
     tint = clamp(Math.round(t.tint * 0.7), -100, 100);
   }
 
-  // 2) Distribution de luminance (log) → exposition
-  const bins = 1024, H = new Uint32Array(bins); let m = 0;
+  // 2) Exposition : mesure « sujet » pondérée, insensible aux grands ciels.
+  //  - pixels saturés dans le RAW : ignorés (aucune information, et les
+  //    assombrir ne ferait que les griser)
+  //  - zones claires dans le haut de l'image (ciel probable) : poids réduit
+  //  - léger poids central, comme la mesure pondérée centrale d'un boîtier
+  const W = info.w || 0, Hh = info.h || 0;
+  const bins = 1024, H = new Uint32Array(bins), HW = new Float64Array(bins); let m = 0, wsum = 0;
   const lumAt = (L) => Math.min(bins - 1, Math.max(0, Math.round((Math.log2(Math.max(L, 1e-6)) + 16) / 16 * (bins - 1))));
+  const isClipped = (i) => { const r = src[i * 3], g = src[i * 3 + 1], b = src[i * 3 + 2]; return (r > g ? (r > b ? r : b) : (g > b ? g : b)) >= 0.985; };
+  let rawClip = 0, rawClipTop = 0;
   for (let i = 0; i < n; i += step) {
     const L = lumaOf(src[i * 3], src[i * 3 + 1], src[i * 3 + 2]);
     H[lumAt(L)]++; m++;
   }
   const pl = (p) => Math.pow(2, percentile(H, m, p) / (bins - 1) * 16 - 16);
-  const med = pl(0.5), p99 = pl(0.995);
-  let ev = Math.log2(srgbDecode(0.44) / Math.max(med, 1e-5));
-  // éviter de brûler : garder le 99,5e centile sous ~2× le blanc
-  ev = Math.min(ev, Math.log2(2.0 / Math.max(p99, 1e-5)));
+  const med = pl(0.5), bright = Math.max(pl(0.8), 0.18);
+  const Hu = new Uint32Array(bins); let mu = 0; // distribution hors pixels saturés
+  let skyW = 0;
+  for (let i = 0; i < n; i += step) {
+    const L = lumaOf(src[i * 3], src[i * 3 + 1], src[i * 3 + 2]);
+    const x = W ? i % W : 0, y = W ? (i / W) | 0 : 0;
+    const top = W && Hh ? y < Hh * 0.45 : false;
+    if (isClipped(i)) { rawClip++; if (top) rawClipTop++; continue; }
+    Hu[lumAt(L)]++; mu++;
+    let w = 1;
+    if (W && Hh) {
+      const dx = (x / W - 0.5) * 2, dy = (y / Hh - 0.55) * 2;
+      w *= 1 + 0.6 * Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy));
+      if (top && L >= bright) { w *= 0.15; skyW++; }
+    }
+    HW[lumAt(L)] += w; wsum += w;
+  }
+  rawClip /= m;
+  let meter = med;
+  if (wsum > 0) { // médiane pondérée
+    let acc = 0, k = 0;
+    for (; k < bins; k++) { acc += HW[k]; if (acc >= wsum / 2) break; }
+    meter = Math.pow(2, k / (bins - 1) * 16 - 16);
+  }
+  const p99u = mu ? Math.pow(2, percentile(Hu, mu, 0.995) / (bins - 1) * 16 - 16) : pl(0.995);
+  const p99 = p99u;
+  let ev = Math.log2(srgbDecode(0.44) / Math.max(meter, 1e-5));
+  // éviter de brûler ce qui ne l'est pas encore : 99,5e centile (hors saturé) sous ~2× le blanc
+  ev = Math.min(ev, Math.log2(2.0 / Math.max(p99u, 1e-5)));
+  // baisser l'exposition n'a de sens que si le sujet lui-même est trop clair
+  if (ev < 0) ev = Math.max(ev, Math.log2(srgbDecode(0.5) / Math.max(meter, 1e-5)));
   ev = clamp(Math.round(ev * 20) / 20, -4, 4);
   if (Math.abs(ev) < 0.1) ev = 0;
+  const skyFrac = mu ? skyW / mu : 0;
 
-  // 3) Distribution encodée après exposition suggérée
+  // 3) Distribution encodée après exposition suggérée (hors pixels saturés dans le RAW)
   const E = new Uint32Array(256); let me = 0, s1 = 0, s2 = 0;
   const mul = Math.pow(2, ev);
   for (let i = 0; i < n; i += step) {
+    if (isClipped(i)) continue;
     const x = srgbEncode(Math.min(1, lumaOf(src[i * 3], src[i * 3 + 1], src[i * 3 + 2]) * mul));
     E[Math.round(x * 255)]++; me++; s1 += x; s2 += x * x;
   }
+  if (!me) { E[255] = 1; me = 1; }
   const pe = (p) => percentile(E, me, p) / 255;
   const frac = (a, b) => { let s = 0; for (let i = a; i <= b; i++) s += E[i]; return s / me; };
   const mean = s1 / me, std = Math.sqrt(Math.max(0, s2 / me - mean * mean));
@@ -98,7 +135,7 @@ export function suggestSettings(src, n, info = {}) {
   let highlights = 0, shadows = 0, whites = 0, blacks = 0, contrast = 0;
   if (hiFrac > 0.01) highlights = -Math.round(clamp(hiFrac * 1500, 15, 80));
   if (loFrac > 0.08) shadows = Math.round(clamp((loFrac - 0.05) * 250, 10, 70));
-  if (p995 < 0.9) whites = Math.round(clamp((0.96 - p995) * 250, 5, 60));
+  if (p995 < 0.9 && rawClip < 0.01) whites = Math.round(clamp((0.96 - p995) * 250, 5, 60));
   else if (clipFrac > 0.02) whites = -Math.round(clamp(clipFrac * 800, 5, 50));
   if (p005 > 0.05) blacks = -Math.round(clamp((p005 - 0.02) * 400, 5, 60));
   else if (blkFrac > 0.02) blacks = Math.round(clamp(blkFrac * 800, 5, 40));
@@ -165,7 +202,7 @@ export function suggestSettings(src, n, info = {}) {
   }
   if (ev !== 0) {
     S.push({ id: 'exp', title: 'Exposition', icon: '☀️',
-      text: `Luminance médiane à ${(srgbEncode(Math.min(1, med)) * 100).toFixed(0)} % : ${ev > 0 ? 'image sous-exposée' : 'image sur-exposée'}. Exposition ${fmt(ev.toFixed(2))} IL.`,
+      text: `Luminance du sujet à ${(srgbEncode(Math.min(1, meter)) * 100).toFixed(0)} %${skyFrac > 0.1 ? ' (ciel clair peu pris en compte)' : ''} : ${ev > 0 ? 'image sous-exposée' : 'image sur-exposée'}. Exposition ${fmt(ev.toFixed(2))} IL.`,
       set: { exposure: ev } });
   }
   if (highlights) S.push({ id: 'hl', title: 'Hautes lumières', icon: '⛅',
@@ -182,11 +219,13 @@ export function suggestSettings(src, n, info = {}) {
     text: `Saturation moyenne faible (${(msat * 100).toFixed(0)} %). Vibrance ${fmt(vibrance)} (protège les couleurs déjà saturées)${tuned('vibrance')}.`, set: { vibrance } });
   if (saturation) S.push({ id: 'st', title: 'Saturation', icon: '🎨',
     text: `Couleurs ${lookInfo ? 'déjà saturées' : 'très saturées'} (${(msat * 100).toFixed(0)} %)${lookInfo ? ', le filtre les renforce encore' : ''}. Saturation ${fmt(saturation)}${tuned('saturation')}.`, set: { saturation } });
+  if (rawClip > 0.03) S.push({ id: 'clip', title: rawClipTop > rawClip * m * 0.5 ? 'Ciel saturé' : 'Zones saturées', icon: '☁️',
+    text: `${(rawClip * 100).toFixed(0)} % de l'image est saturée dès la prise de vue (sans détail récupérable). L'exposition est mesurée sur le reste de l'image pour ne pas l'assombrir inutilement.`, set: null });
   if (info.iso >= 3200) S.push({ id: 'iso', title: 'Bruit', icon: 'ℹ️',
     text: `ISO ${info.iso} : éviter de trop déboucher les ombres, le bruit y est plus visible.`, set: null });
 
   const auto = { temp, tint, exposure: ev, highlights, shadows, whites, blacks, contrast, vibrance, saturation };
-  return { suggestions: S, auto, stats: { median: med, p99, std, msat, hiFrac, loFrac } };
+  return { suggestions: S, auto, stats: { median: med, meter, p99, std, msat, hiFrac, loFrac, rawClip, skyFrac } };
 }
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
