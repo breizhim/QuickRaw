@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111214">
+  <meta name="description" content="Développement de fichiers RAW / DNG dans le navigateur : analyse colorimétrique, suggestions de réglages, recadrage, redressage et export JPG pleine résolution.">
+  <title>QuickRaw</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/style.css">
+  <script>
+    // LibRaw-WASM utilise des threads (SharedArrayBuffer) : la page doit être
+    // « cross-origin isolated ». Si le serveur n'envoie pas les en-têtes
+    // COOP/COEP (ex. GitHub Pages), un service worker les ajoute.
+    (function () {
+      if (window.crossOriginIsolated || !('serviceWorker' in navigator) || !window.isSecureContext) return;
+      navigator.serviceWorker.register('coi-sw.js').then(function (reg) {
+        var reloaded = false;
+        try { reloaded = sessionStorage.getItem('coiReload') === '1'; } catch (e) {}
+        if (reloaded) return; // évite une boucle si l'isolation échoue malgré tout
+        var go = function () { try { sessionStorage.setItem('coiReload', '1'); } catch (e) {} location.reload(); };
+        if (navigator.serviceWorker.controller) go();
+        else navigator.serviceWorker.addEventListener('controllerchange', go);
+      });
+    })();
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="6" width="26" height="20" rx="4" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="16" cy="16" r="5.5" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="24" cy="10.5" r="1.6" fill="currentColor"/></svg>
+      <span>QuickRaw</span>
+    </div>
+    <div class="topbar-actions">
+      <label class="btn" title="Ouvrir un fichier RAW / DNG">
+        <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span class="lbl">Ouvrir</span>
+        <input type="file" id="fileInput" hidden>
+      </label>
+      <button class="btn" id="metaBtn" disabled title="Voir toutes les métadonnées">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>
+        <span class="lbl">Métadonnées</span>
+      </button>
+      <button class="btn primary" id="exportBtn" disabled title="Exporter en JPG qualité 100 %, pleine résolution">
+        <svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+        <span class="lbl">Export JPG</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="viewer" id="viewer">
+      <div class="dropzone" id="dropzone">
+        <svg viewBox="0 0 24 24" class="dz-icon"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+        <h1>Développez vos RAW dans le navigateur</h1>
+        <p>DNG, CR2, CR3, NEF, ARW, RAF, ORF, RW2, PEF… Rien n'est envoyé sur un serveur : tout est traité sur votre appareil.</p>
+        <label class="btn primary big">Choisir un fichier<input type="file" id="fileInput2" hidden></label>
+        <p class="hint desktop-only">ou glissez-déposez un fichier ici</p>
+        <p class="warn" id="coiWarn" hidden></p>
+      </div>
+      <canvas id="canvas" hidden></canvas>
+      <div class="viewer-tools" id="viewerTools" hidden>
+        <button class="chip" id="beforeBtn" title="Maintenir pour voir l'original">Avant / Après</button>
+        <button class="chip" id="clipBtn" aria-pressed="false" title="Afficher l'écrêtage (rouge : blancs, bleu : noirs)">Écrêtage</button>
+      </div>
+      <div class="info-line" id="infoLine" hidden></div>
+    </section>
+
+    <aside class="panel" id="panel" hidden>
+      <nav class="tabs" role="tablist">
+        <button role="tab" class="tab active" data-tab="adjust">Réglages</button>
+        <button role="tab" class="tab" data-tab="analyse">Analyse</button>
+        <button role="tab" class="tab" data-tab="crop">Recadrage</button>
+      </nav>
+
+      <div class="tab-body" data-body="adjust">
+        <canvas class="histo" id="histoSmall" width="600" height="150"></canvas>
+        <div class="card suggest">
+          <div class="card-head">
+            <h2>Suggestions</h2>
+            <button class="btn small primary" id="autoBtn">Tout appliquer</button>
+          </div>
+          <ul id="suggestList" class="suggest-list"></ul>
+        </div>
+        <div id="sliders"></div>
+        <div class="row-actions">
+          <button class="btn small" id="resetBtn">Réinitialiser les réglages</button>
+        </div>
+      </div>
+
+      <div class="tab-body" data-body="analyse" hidden>
+        <h2>Histogramme RVB</h2>
+        <canvas class="histo" id="histoBig" width="600" height="200"></canvas>
+        <div class="legend"><span class="r">R</span><span class="g">V</span><span class="b">B</span><span class="l">Luminance</span></div>
+        <h2>Spectre des teintes</h2>
+        <canvas class="spectrum" id="hueCanvas" width="600" height="120"></canvas>
+        <h2>Vectorscope</h2>
+        <canvas class="scope" id="scopeCanvas" width="300" height="300"></canvas>
+        <h2>Statistiques</h2>
+        <table class="stats" id="statsTable"></table>
+      </div>
+
+      <div class="tab-body" data-body="crop" hidden>
+        <h2>Format</h2>
+        <div class="chips" id="aspectChips">
+          <button class="chip active" data-aspect="free">Libre</button>
+          <button class="chip" data-aspect="orig">Original</button>
+          <button class="chip" data-aspect="1">1:1</button>
+          <button class="chip" data-aspect="1.5">3:2</button>
+          <button class="chip" data-aspect="1.3333333">4:3</button>
+          <button class="chip" data-aspect="1.25">5:4</button>
+          <button class="chip" data-aspect="1.7777778">16:9</button>
+          <button class="chip" id="aspectSwap" title="Inverser portrait / paysage">⇄</button>
+        </div>
+        <h2>Rotation</h2>
+        <div class="chips">
+          <button class="chip" id="rotL" title="Rotation 90° anti-horaire">↺ 90°</button>
+          <button class="chip" id="rotR" title="Rotation 90° horaire">↻ 90°</button>
+          <button class="chip" id="flipH" title="Miroir horizontal">⇋ Miroir</button>
+        </div>
+        <h2>Redressement</h2>
+        <div class="slider" id="angleSlider">
+          <div class="slider-head"><label for="angleRange">Angle</label><output id="angleOut">0,0°</output></div>
+          <input type="range" id="angleRange" min="-45" max="45" step="0.05" value="0">
+        </div>
+        <div class="chips">
+          <button class="chip accent" id="autoStraight">✨ Redressage auto</button>
+          <button class="chip" id="cropReset">Réinitialiser</button>
+        </div>
+        <p class="hint" id="straightInfo"></p>
+        <p class="hint">Faites glisser le cadre ou ses poignées. Le recadrage reste toujours à l'intérieur de l'image redressée.</p>
+      </div>
+    </aside>
+  </main>
+
+  <div class="overlay" id="busy" hidden>
+    <div class="busy-box">
+      <div class="spinner"></div>
+      <p id="busyText">Chargement…</p>
+      <div class="progress" id="busyProgress" hidden><div></div></div>
+    </div>
+  </div>
+
+  <dialog id="metaDialog" class="dialog">
+    <form method="dialog" class="dialog-head">
+      <h2>Métadonnées</h2>
+      <input type="search" id="metaSearch" placeholder="Filtrer…" aria-label="Filtrer les métadonnées">
+      <button class="btn small" id="metaCopy" type="button">Copier JSON</button>
+      <button class="btn small icon" value="close" aria-label="Fermer">✕</button>
+    </form>
+    <div class="dialog-body" id="metaBody"></div>
+  </dialog>
+
+  <dialog id="exportDialog" class="dialog small">
+    <form method="dialog" class="dialog-head">
+      <h2>Export terminé</h2>
+      <button class="btn small icon" value="close" aria-label="Fermer">✕</button>
+    </form>
+    <div class="dialog-body">
+      <p id="exportInfo"></p>
+      <div class="row-actions">
+        <a class="btn primary" id="exportDownload" download>Télécharger le JPG</a>
+        <button class="btn" id="exportShare" hidden>Partager / Enregistrer</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
