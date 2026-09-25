@@ -1,5 +1,5 @@
 // Analyse colorimétrique, suggestions de réglages et redressage automatique.
-import { srgbEncode, srgbDecode, lumaOf, wbFromMultipliers, orientedSize } from './pipeline.js';
+import { srgbEncode, srgbDecode, lumaOf, wbFromMultipliers, orientedSize, LOOKS } from './pipeline.js';
 
 // ---------- Statistiques sur l'image rendue (RGBA 8 bits) ----------
 export const SCOPE_GAIN = 1.2; // zoom du vectorscope (les cibles à 75 % restent dans le cercle)
@@ -117,8 +117,34 @@ export function suggestSettings(src, n, info = {}) {
   if (msat < 0.25) vibrance = Math.round(clamp((0.32 - msat) * 200, 5, 40));
   else if (msat > 0.55) saturation = -Math.round(clamp((msat - 0.5) * 100, 5, 25));
 
+  // ---------- Prise en compte du filtre ----------
+  // Le filtre apporte déjà contraste, noirs denses et saturation : on évite de
+  // cumuler les effets, et on protège hautes lumières / ombres qu'il durcit.
+  const look = LOOKS[info.look], la = (info.lookAmount ?? 100) / 100;
+  const neutral = { highlights, shadows, blacks, contrast, vibrance, saturation };
+  let lookInfo = null;
+  if (look && look.tone && la > 0) {
+    const lc = (look.tone.contrast || 0) * la, lb = -(look.tone.blacks || 0) * la, ls = (look.sat - 1) * 100 * la;
+    if (contrast > 0) contrast = Math.max(0, Math.round(contrast - lc));
+    else if (contrast < 0 || std > 0.27) contrast = Math.round(Math.min(contrast, 0) - 0.4 * lc);
+    if (blacks < 0) blacks = Math.min(0, Math.round(blacks + lb));
+    else if (blacks > 0 || blkFrac > 0.005) blacks = Math.round(blacks + 0.6 * lb);
+    vibrance = Math.max(0, Math.round(vibrance - 0.8 * ls));
+    if (msat > 0.42) saturation = Math.min(saturation, -Math.round(0.4 * ls));
+    if (hiFrac > 0.005) highlights = Math.round(highlights - 0.4 * lc);
+    if (loFrac > 0.12) shadows = Math.round(shadows + 0.8 * lb + 0.2 * lc);
+    highlights = clamp(highlights, -100, 100); shadows = clamp(shadows, -100, 100);
+    blacks = clamp(blacks, -100, 100); contrast = clamp(contrast, -100, 100);
+    lookInfo = {
+      id: 'look', title: `Filtre ${look.name}`, icon: '🎞️', set: null,
+      text: `Le filtre ajoute déjà du contraste (+${Math.round(lc)}), des noirs plus denses et +${Math.round(ls)} % de saturation. Les suggestions ci-dessous en tiennent compte pour ne pas cumuler les effets.`,
+    };
+  }
+  const tuned = (k) => (lookInfo && neutral[k] !== { highlights, shadows, blacks, contrast, vibrance, saturation }[k] ? ' (ajusté pour le filtre)' : '');
+
   // ---------- Construction des suggestions lisibles ----------
   const S = [];
+  if (lookInfo) S.push(lookInfo);
   const fmt = (v) => (v > 0 ? '+' : '') + v;
   if (Math.abs(temp) >= 4 || Math.abs(tint) >= 4) {
     const dir = temp > 0 ? 'une dominante froide (bleutée)' : 'une dominante chaude (orangée)';
@@ -133,19 +159,19 @@ export function suggestSettings(src, n, info = {}) {
       set: { exposure: ev } });
   }
   if (highlights) S.push({ id: 'hl', title: 'Hautes lumières', icon: '⛅',
-    text: `${(hiFrac * 100).toFixed(1)} % des pixels sont proches du blanc. Récupérer les détails : ${fmt(highlights)}.`, set: { highlights } });
+    text: `${(hiFrac * 100).toFixed(1)} % des pixels sont proches du blanc. Récupérer les détails : ${fmt(highlights)}${tuned('highlights')}.`, set: { highlights } });
   if (shadows) S.push({ id: 'sh', title: 'Ombres', icon: '🌑',
-    text: `${(loFrac * 100).toFixed(0)} % de l'image est dans les ombres profondes. Déboucher : ${fmt(shadows)}.`, set: { shadows } });
+    text: `${(loFrac * 100).toFixed(0)} % de l'image est dans les ombres profondes. Déboucher : ${fmt(shadows)}${tuned('shadows')}.`, set: { shadows } });
   if (whites) S.push({ id: 'wh', title: 'Blancs', icon: '⬜',
     text: whites > 0 ? `L'histogramme n'atteint pas le blanc (${(p995 * 100).toFixed(0)} %). Étendre : ${fmt(whites)}.` : `${(clipFrac * 100).toFixed(1)} % de blancs écrêtés. Réduire : ${fmt(whites)}.`, set: { whites } });
   if (blacks) S.push({ id: 'bk', title: 'Noirs', icon: '⬛',
-    text: blacks < 0 ? `Noirs délavés (point le plus sombre à ${(p005 * 100).toFixed(0)} %). Densifier : ${fmt(blacks)}.` : `${(blkFrac * 100).toFixed(1)} % de noirs bouchés. Relever : ${fmt(blacks)}.`, set: { blacks } });
+    text: blacks < 0 ? `Noirs délavés (point le plus sombre à ${(p005 * 100).toFixed(0)} %). Densifier : ${fmt(blacks)}${tuned('blacks')}.` : `${(blkFrac * 100).toFixed(1)} % de noirs bouchés. Relever : ${fmt(blacks)}${tuned('blacks')}.`, set: { blacks } });
   if (contrast) S.push({ id: 'ct', title: 'Contraste', icon: '◐',
-    text: `Écart-type des tons : ${(std * 100).toFixed(0)} % (${contrast > 0 ? 'image plate' : 'image très contrastée'}). Contraste ${fmt(contrast)}.`, set: { contrast } });
+    text: `Écart-type des tons : ${(std * 100).toFixed(0)} % (${contrast > 0 ? 'image plate' : lookInfo ? 'le filtre durcit déjà les tons' : 'image très contrastée'}). Contraste ${fmt(contrast)}${tuned('contrast')}.`, set: { contrast } });
   if (vibrance) S.push({ id: 'vb', title: 'Vibrance', icon: '🎨',
-    text: `Saturation moyenne faible (${(msat * 100).toFixed(0)} %). Vibrance ${fmt(vibrance)} (protège les couleurs déjà saturées).`, set: { vibrance } });
+    text: `Saturation moyenne faible (${(msat * 100).toFixed(0)} %). Vibrance ${fmt(vibrance)} (protège les couleurs déjà saturées)${tuned('vibrance')}.`, set: { vibrance } });
   if (saturation) S.push({ id: 'st', title: 'Saturation', icon: '🎨',
-    text: `Couleurs très saturées (${(msat * 100).toFixed(0)} %). Saturation ${fmt(saturation)}.`, set: { saturation } });
+    text: `Couleurs ${lookInfo ? 'déjà saturées' : 'très saturées'} (${(msat * 100).toFixed(0)} %)${lookInfo ? ', le filtre les renforce encore' : ''}. Saturation ${fmt(saturation)}${tuned('saturation')}.`, set: { saturation } });
   if (info.iso >= 3200) S.push({ id: 'iso', title: 'Bruit', icon: 'ℹ️',
     text: `ISO ${info.iso} : éviter de trop déboucher les ombres, le bruit y est plus visible.`, set: null });
 

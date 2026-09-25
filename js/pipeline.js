@@ -17,7 +17,36 @@ export const DEFAULT_PARAMS = Object.freeze({
   blacks: 0,      // -100..100
   vibrance: 0,    // -100..100
   saturation: 0,  // -100..100
+  look: 'none',   // filtre : 'none' | 'vivid' | 'velvia'
+  lookAmount: 100, // intensité du filtre, 0..100 %
 });
+
+// ---------- Filtres (profils de rendu) ----------
+// tone : décalages ajoutés aux curseurs (contraste, noirs…) ;
+// sat : multiplicateur global de saturation ; hueSat / hueLum : multiplicateurs
+// par teinte, tous les 30° (0 rouge, 30 orange, 60 jaune, 90 jaune-vert,
+// 120 vert, 150 vert-cyan, 180 cyan, 210 azur, 240 bleu, 270 violet,
+// 300 magenta, 330 rose).
+export const LOOKS = {
+  none: { name: 'Sans filtre' },
+  // Adobe Vivid : plus de contraste et de saturation, tons chair protégés
+  vivid: {
+    name: 'Vivid',
+    tone: { contrast: 18, blacks: -6, highlights: -5 },
+    sat: 1.2,
+    hueSat: [1.0, 0.9, 0.97, 1.02, 1.05, 1.05, 1.05, 1.06, 1.06, 1.03, 1.0, 1.0],
+    hueLum: [1, 1, 1, 1, 1, 1, 1, 0.98, 0.97, 1, 1, 1],
+  },
+  // Fujichrome Velvia : diapositive très contrastée et saturée — verts et
+  // jaunes luxuriants, bleus profonds, rouges intenses, noirs denses
+  velvia: {
+    name: 'Velvia',
+    tone: { contrast: 32, blacks: -14, highlights: -8, shadows: -4 },
+    sat: 1.32,
+    hueSat: [1.06, 0.95, 1.14, 1.2, 1.2, 1.14, 1.1, 1.12, 1.14, 1.05, 1.02, 1.04],
+    hueLum: [0.97, 1.0, 1.04, 1.0, 0.95, 0.94, 0.92, 0.88, 0.86, 0.92, 0.97, 0.97],
+  },
+};
 
 export const DEFAULT_GEOM = Object.freeze({
   rot90: 0,       // quarts de tour horaires (0..3)
@@ -82,7 +111,14 @@ const LUT_MAX = 64; // luminance linéaire max couverte (6 IL au-dessus du blanc
 // Construit le processeur de pixels pour un jeu de paramètres.
 // `base` : { exposure } offset d'exposition de base (ex. BaselineExposure DNG).
 export function makeProcessor(params, base = {}) {
-  const p = { ...DEFAULT_PARAMS, ...params };
+  const user = { ...DEFAULT_PARAMS, ...params };
+  const look = LOOKS[user.look] && LOOKS[user.look].tone ? LOOKS[user.look] : null;
+  const la = look ? Math.max(0, Math.min(100, user.lookAmount)) / 100 : 0;
+  // Le filtre s'ajoute aux curseurs de tons
+  const p = { ...user };
+  if (look) for (const [k, v] of Object.entries(look.tone)) p[k] = user[k] + v * la;
+  const lookSat = look ? look.hueSat.map((m) => 1 + (look.sat * m - 1) * la) : null;
+  const lookLum = look ? look.hueLum.map((m) => 1 + (m - 1) * la) : null;
   const [wr, wg, wb] = wbMultipliers(p.temp, p.tint);
   const expMul = Math.pow(2, p.exposure + (base.exposure || 0));
   const mr = wr * expMul, mg = wg * expMul, mb = wb * expMul;
@@ -135,6 +171,25 @@ export function makeProcessor(params, base = {}) {
       fac *= vib >= 0 ? 1 + vib * (1 - s) * (1 - s) : 1 + vib * (1 - s * 0.5);
       if (fac < 0) fac = 0;
       r = Y + (r - Y) * fac; g = Y + (g - Y) * fac; b = Y + (b - Y) * fac;
+    }
+    // Filtre : saturation et luminance selon la teinte
+    if (lookSat) {
+      const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+      const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+      const c = mx - mn;
+      if (c > 1e-6) {
+        let h;
+        if (mx === r) h = (g - b) / c; else if (mx === g) h = (b - r) / c + 2; else h = (r - g) / c + 4;
+        h = h < 0 ? h + 6 : h;                   // 0..6
+        const t = h * 2, i0 = t | 0, fr = t - i0; // 12 cases de 30°
+        const i1 = i0 + 1 >= 12 ? 0 : i0 + 1, j0 = i0 >= 12 ? 0 : i0;
+        const s = c / mx;
+        const fs = lookSat[j0] + (lookSat[i1] - lookSat[j0]) * fr;
+        const fac = 1 + (fs - 1) * (1 - 0.5 * s); // ménage les couleurs déjà saturées
+        const fl = 1 + (lookLum[j0] + (lookLum[i1] - lookLum[j0]) * fr - 1) * s;
+        r = (Y + (r - Y) * fac) * fl; g = (Y + (g - Y) * fac) * fl; b = (Y + (b - Y) * fac) * fl;
+        Y *= fl;
+      }
     }
     // Compression de gamut : ramène vers la luminance au lieu d'écrêter
     let mx = r > g ? (r > b ? r : b) : (g > b ? g : b);

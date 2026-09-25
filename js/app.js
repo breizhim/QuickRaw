@@ -136,12 +136,9 @@ async function openFile(file) {
     busy('Analyse colorimétrique…');
     await nextFrame();
     const p = state.preview;
-    state.analysis = suggestSettings(p.data, p.w * p.h, { iso: raw?.iso_speed });
-    // L'analyse est faite sans exposition de base : on la retranche de la suggestion
-    if (state.base.exposure) state.analysis.auto.exposure = round2(state.analysis.auto.exposure - state.base.exposure);
-    fixExposureSuggestion();
     state.straight = detectStraighten(p.data, p.w, p.h);
-    addStraightSuggestion();
+    computeAnalysis();
+    setupThumbs();
 
     showEditor();
     setupProcCanvas();
@@ -179,6 +176,18 @@ async function decodeFull(buf) {
 function setFullStatus(text) {
   const el = $('#fullStatus');
   el.textContent = text; el.hidden = !text;
+}
+
+// Suggestions (dépendent du filtre choisi)
+function computeAnalysis() {
+  const p = state.preview;
+  state.analysis = suggestSettings(p.data, p.w * p.h, {
+    iso: state.raw?.iso_speed, look: state.params.look, lookAmount: state.params.lookAmount,
+  });
+  // L'analyse est faite sans exposition de base : on la retranche de la suggestion
+  if (state.base.exposure) state.analysis.auto.exposure = round2(state.analysis.auto.exposure - state.base.exposure);
+  fixExposureSuggestion();
+  addStraightSuggestion();
 }
 
 function fixExposureSuggestion() {
@@ -608,8 +617,62 @@ $('#autoBtn').addEventListener('click', () => {
   toast('Suggestions appliquées. Ajustez librement les curseurs.');
 });
 $('#resetBtn').addEventListener('click', () => {
-  state.params = { ...DEFAULT_PARAMS }; syncSliders(); scheduleRender(true); renderSuggestions();
+  const { look, lookAmount } = state.params; // le filtre est conservé
+  state.params = { ...DEFAULT_PARAMS, look, lookAmount }; syncSliders(); scheduleRender(true); renderSuggestions();
 });
+
+// ---------------------------------------------------------------- filtres
+const thumbs = { src: null, w: 0, h: 0 };
+function setupThumbs() {
+  // petite version de l'aperçu pour les vignettes des filtres
+  const p = state.preview, f = Math.max(1, Math.ceil(Math.max(p.w, p.h) / 180));
+  const w = Math.floor(p.w / f), h = Math.floor(p.h / f), out = new Float32Array(w * h * 3);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = ((y * f) * p.w + x * f) * 3, o = (y * w + x) * 3;
+    out[o] = p.data[i]; out[o + 1] = p.data[i + 1]; out[o + 2] = p.data[i + 2];
+  }
+  Object.assign(thumbs, { src: out, w, h });
+  syncLookUI();
+  drawThumbs();
+}
+function drawThumbs() {
+  if (!thumbs.src) return;
+  document.querySelectorAll('#lookChips .look').forEach((btn) => {
+    const c = btn.querySelector('canvas');
+    c.width = thumbs.w; c.height = thumbs.h;
+    const ctx = c.getContext('2d'), img = ctx.createImageData(thumbs.w, thumbs.h);
+    const pr = makeProcessor({ ...state.params, look: btn.dataset.look, lookAmount: 100 }, state.base);
+    processRGBA(pr, thumbs.src, img.data, thumbs.w * thumbs.h);
+    ctx.putImageData(img, 0, 0);
+  });
+}
+function syncLookUI() {
+  const { look, lookAmount } = state.params;
+  document.querySelectorAll('#lookChips .look').forEach((b) => b.classList.toggle('active', b.dataset.look === look));
+  $('#lookAmountRow').hidden = look === 'none';
+  $('#lookAmount').value = lookAmount;
+  $('#lookAmountOut').textContent = `${lookAmount} %`;
+}
+document.querySelectorAll('#lookChips .look').forEach((btn) => btn.addEventListener('click', () => {
+  if (state.params.look === btn.dataset.look) return;
+  state.params.look = btn.dataset.look;
+  lookChanged();
+}));
+let lookTimer = null;
+$('#lookAmount').addEventListener('input', (e) => {
+  state.params.lookAmount = +e.target.value;
+  $('#lookAmountOut').textContent = `${state.params.lookAmount} %`;
+  scheduleRender(true);
+  clearTimeout(lookTimer); lookTimer = setTimeout(lookChanged, 250); // suggestions après le geste
+});
+$('#lookAmountRow .slider-head').addEventListener('dblclick', () => { state.params.lookAmount = 100; lookChanged(); });
+function lookChanged() {
+  syncLookUI();
+  computeAnalysis();
+  syncSliders(); renderSuggestions();
+  scheduleRender(true);
+}
+
 
 // ---------------------------------------------------------------- analyse / histogrammes
 function updateStats() {
@@ -617,6 +680,7 @@ function updateStats() {
   const { w, h } = state.preview;
   const st = renderedStats(proc.img.data, w * h, (w * h) > 1.5e6 ? 2 : 1);
   drawHistogram($('#histoSmall'), st);
+  if (state.tab === 'adjust') drawThumbs();
   if (state.tab === 'analyse') {
     drawHistogram($('#histoBig'), st);
     drawHue($('#hueCanvas'), st.hue);

@@ -77,6 +77,16 @@
 
       <div class="tab-body" data-body="adjust">
         <canvas class="histo" id="histoSmall" width="600" height="150"></canvas>
+        <h2>Filtre</h2>
+        <div class="looks" id="lookChips">
+          <button class="look active" data-look="none"><canvas></canvas><span>Sans filtre</span></button>
+          <button class="look" data-look="vivid"><canvas></canvas><span>Vivid</span></button>
+          <button class="look" data-look="velvia"><canvas></canvas><span>Velvia</span></button>
+        </div>
+        <div class="slider" id="lookAmountRow" hidden>
+          <div class="slider-head"><label for="lookAmount">Intensité du filtre</label><output id="lookAmountOut">100 %</output></div>
+          <input type="range" id="lookAmount" min="0" max="100" step="1" value="100">
+        </div>
         <div class="card suggest">
           <div class="card-head">
             <h2>Suggestions</h2>
