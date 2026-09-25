@@ -224,3 +224,8 @@ table.meta td:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, mon
   content: ""; position: absolute; left: 9px; top: 50%; width: 10px; height: 10px; margin-top: -6px;
   border: 2px solid var(--bg-3); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
 }
+
+/* Pourcentages d'écrêtage dans le bouton */
+#clipBtn .clip-hi, #clipBtn .clip-lo { font-variant-numeric: tabular-nums; font-size: .78rem; padding: 1px 5px; border-radius: 6px; background: rgba(0,0,0,.35); }
+#clipBtn .clip-hi { color: #ffb3c0; }
+#clipBtn .clip-lo { color: #b3cfff; }

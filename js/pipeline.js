@@ -162,16 +162,11 @@ const ENC_LUT = (() => {
 })();
 
 // Traite un tampon linéaire RVB (Float32 0..1) vers RGBA 8 bits.
-export function processRGBA(proc, src, dst, n, clipWarn = false) {
+export function processRGBA(proc, src, dst, n) {
   const px = proc.pixel;
   for (let i = 0, s = 0, d = 0; i < n; i++, s += 3, d += 4) {
     px(src[s], src[s + 1], src[s + 2], dst, d);
     dst[d + 3] = 255;
-    if (clipWarn) {
-      const r = dst[d], g = dst[d + 1], b = dst[d + 2];
-      if (r >= 254 || g >= 254 || b >= 254) { dst[d] = 255; dst[d + 1] = 0; dst[d + 2] = 60; }
-      else if (r <= 1 && g <= 1 && b <= 1) { dst[d] = 0; dst[d + 1] = 90; dst[d + 2] = 255; }
-    }
   }
 }
 

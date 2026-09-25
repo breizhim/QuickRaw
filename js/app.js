@@ -268,8 +268,43 @@ function setupProcCanvas() {
 function renderProcessed() {
   const { data, w, h } = state.preview;
   const pr = makeProcessor(state.params, state.base);
-  processRGBA(pr, data, proc.img.data, w * h, state.clipWarn);
-  proc.ctx.putImageData(proc.img, 0, 0);
+  processRGBA(pr, data, proc.img.data, w * h);
+  // proc.img reste « propre » (histogramme, statistiques) ; l'alerte d'écrêtage
+  // est peinte sur une copie
+  proc.ctx.putImageData(state.clipWarn ? clipOverlay(proc.img) : proc.img, 0, 0);
+  updateClipButton();
+}
+
+function updateClipButton() {
+  const btn = $('#clipBtn'), c = state.clipCounts;
+  if (!state.clipWarn || !c) { btn.textContent = 'Écrêtage'; return; }
+  const pct = (v) => (v * 100).toFixed(v < 0.1 && v > 0 ? 2 : 1).replace('.', ',') + '%';
+  btn.innerHTML = `Écrêtage <span class="clip-hi">▲${pct(c.hi)}</span> <span class="clip-lo">▼${pct(c.lo)}</span>`;
+}
+
+// Rouge : au moins un canal saturé (≥ 254) ; bleu : noir pur (tous canaux ≤ 1)
+function clipOverlay(img) {
+  if (!proc.clipImg || proc.clipImg.width !== img.width) proc.clipImg = new ImageData(img.width, img.height);
+  const s = img.data, d = proc.clipImg.data;
+  let hi = 0, lo = 0;
+  for (let i = 0; i < s.length; i += 4) {
+    const r = s[i], g = s[i + 1], b = s[i + 2];
+    if (r >= 254 || g >= 254 || b >= 254) { d[i] = 255; d[i + 1] = 0; d[i + 2] = 60; hi++; }
+    else if (r <= 1 && g <= 1 && b <= 1) { d[i] = 0; d[i + 1] = 90; d[i + 2] = 255; lo++; }
+    else { d[i] = r; d[i + 1] = g; d[i + 2] = b; }
+    d[i + 3] = 255;
+  }
+  const n = s.length / 4;
+  state.clipCounts = { hi: hi / n, lo: lo / n };
+  return proc.clipImg;
+}
+
+function clipSummary() {
+  const c = state.clipCounts;
+  if (!c) return '';
+  const pct = (v) => (v * 100).toFixed(v < 0.01 ? 2 : 1).replace('.', ',') + ' %';
+  if (c.hi < 0.0005 && c.lo < 0.0005) return 'Écrêtage : aucune zone brûlée ni bouchée ✓';
+  return `Écrêtage — rouge : ${pct(c.hi)} brûlé · bleu : ${pct(c.lo)} bouché`;
 }
 
 function beforeCanvas() {
@@ -804,6 +839,10 @@ beforeBtn.addEventListener('contextmenu', (e) => e.preventDefault());
 $('#clipBtn').addEventListener('click', () => {
   state.clipWarn = !state.clipWarn;
   $('#clipBtn').setAttribute('aria-pressed', String(state.clipWarn));
+  if (state.clipWarn) {
+    renderProcessed(); drawView();
+    toast(clipSummary() + '. Réglez Hautes lumières / Blancs / Noirs pour les réduire.', false, 5000);
+  }
   scheduleRender(true);
 });
 window.addEventListener('keydown', (e) => {
