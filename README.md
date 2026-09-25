@@ -20,8 +20,8 @@ envoyé sur un serveur, tout est traité sur l'appareil (ordinateur ou mobile).
   ombres, blancs, noirs, vibrance, saturation. Double-clic / double-tape sur un
   intitulé pour le remettre à zéro. Bouton *Avant / Après* (maintenir, ou touche
   `\`) et affichage de l'écrêtage.
-- **Recadrage et rotation** : formats libre / original / 1:1 / 3:2 / 4:3 / 5:4 /
-  16:9 (inversibles), rotation 90°, miroir, redressement fin ±45° ; le cadre
+- **Recadrage et rotation** : cadre en paysage ou en portrait, formats libre /
+  original / 1:1 / 3:2 / 4:3 / 5:4 / 16:9 (2:3, 3:4… en portrait), rotation 90°, miroir, redressement fin ±45° ; le cadre
   reste toujours dans l'image redressée.
 - **Redressage automatique** : détection des lignes horizontales / verticales
   dominantes (tenseur de structure + histogramme d'orientations).

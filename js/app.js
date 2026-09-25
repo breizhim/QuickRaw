@@ -19,6 +19,7 @@ const state = {
   params: { ...DEFAULT_PARAMS },
   geom: structuredClone(DEFAULT_GEOM),
   aspect: null,               // null = libre, sinon rapport l/h en pixels
+  aspectKey: 'free', portrait: false,
   autoCrop: true,             // recadrage piloté automatiquement (non modifié à la main)
   analysis: null,             // résultat de suggestSettings
   straight: null,             // { angle, confidence }
@@ -104,7 +105,7 @@ async function openFile(file) {
     const res = await engine.call({ type: 'load', data, width, height, previewMax: PREVIEW_MAX }, [data.buffer]);
     Object.assign(state, {
       file, exif, raw, SW: width, SH: height, preview: res.preview,
-      params: { ...DEFAULT_PARAMS }, geom: structuredClone(DEFAULT_GEOM), aspect: null, autoCrop: true,
+      params: { ...DEFAULT_PARAMS }, geom: structuredClone(DEFAULT_GEOM), aspect: null, autoCrop: true, portrait: height > width,
       base: { exposure: raw?.color_data?.dng_levels?.baseline_exposure || 0 },
       sections: null, clipWarn: false,
     });
@@ -677,30 +678,50 @@ angleRange.addEventListener('input', () => { dragging = 'angle'; setAngle(+angle
 angleRange.addEventListener('change', () => { dragging = null; scheduleRender(); });
 $('#angleSlider .slider-head').addEventListener('dblclick', () => { setAngle(0); renderSuggestions(); });
 
+// Format : clé du bouton actif + orientation du cadre (paysage / portrait)
+function computeAspect() {
+  const [OW, OH] = orientedDims(), k = state.aspectKey;
+  if (k === 'free') return null;
+  const r = k === 'orig' ? Math.max(OW, OH) / Math.min(OW, OH) : +k;
+  return state.portrait ? 1 / r : r;
+}
 function setAspectChip(val) {
-  document.querySelectorAll('#aspectChips .chip[data-aspect]').forEach((c) => c.classList.toggle('active', c.dataset.aspect === val));
+  if (val !== undefined) state.aspectKey = val;
+  document.querySelectorAll('#aspectChips .chip[data-aspect]').forEach((c) => {
+    c.classList.toggle('active', c.dataset.aspect === state.aspectKey);
+    if (c.dataset.l) c.textContent = state.portrait ? c.dataset.p : c.dataset.l;
+  });
+  document.querySelectorAll('#orientChips .chip').forEach((c) =>
+    c.classList.toggle('active', (c.dataset.orient === 'portrait') === state.portrait));
 }
 document.querySelectorAll('#aspectChips .chip[data-aspect]').forEach((chip) => chip.addEventListener('click', () => {
-  const v = chip.dataset.aspect;
-  const [OW, OH] = orientedDims();
-  if (v === 'free') state.aspect = null;
-  else if (v === 'orig') state.aspect = OW / OH;
-  else { const r = +v; state.aspect = OH > OW ? 1 / r : r; } // suit l'orientation de l'image
-  setAspectChip(v);
-  if (state.aspect) { state.autoCrop = true; refitCrop(); }
-  scheduleRender();
+  setAspectChip(chip.dataset.aspect);
+  state.aspect = computeAspect();
+  state.autoCrop = true; refitCrop();
+  scheduleRender(); updateStats();
 }));
-$('#aspectSwap').addEventListener('click', () => {
-  if (!state.aspect) {
+document.querySelectorAll('#orientChips .chip').forEach((chip) => chip.addEventListener('click', () => {
+  const portrait = chip.dataset.orient === 'portrait';
+  if (portrait === state.portrait) return;
+  state.portrait = portrait;
+  if (state.aspectKey === 'free') {
+    // format libre : on inverse les proportions du cadre actuel
     const [OW, OH] = orientedDims(), c = state.geom.crop;
-    state.aspect = (c.h * OH) / (c.w * OW); setAspectChip('');
-  } else state.aspect = 1 / state.aspect;
-  state.autoCrop = true; refitCrop(); scheduleRender();
-});
+    state.aspect = (c.h * OH) / (c.w * OW);
+    state.autoCrop = true; refitCrop();
+    state.aspect = null; state.autoCrop = false;
+  } else {
+    state.aspect = computeAspect();
+    state.autoCrop = true; refitCrop();
+  }
+  setAspectChip();
+  scheduleRender(); updateStats();
+}));
 function rotate90(dir) {
   const g = state.geom;
   g.rot90 = (g.rot90 + (dir > 0 ? 1 : 3)) % 4;
-  if (state.aspect) state.aspect = 1 / state.aspect;
+  state.portrait = !state.portrait; // le cadre tourne avec l'image
+  state.aspect = computeAspect(); setAspectChip();
   state.autoCrop = true; refitCrop(); scheduleRender(); updateStats();
 }
 $('#rotL').addEventListener('click', () => rotate90(-1));
@@ -713,6 +734,7 @@ $('#flipH').addEventListener('click', () => {
 });
 $('#cropReset').addEventListener('click', () => {
   state.geom = structuredClone(DEFAULT_GEOM); state.aspect = null; state.autoCrop = true;
+  state.portrait = state.SH > state.SW;
   setAspectChip('free'); $('#flipH').classList.remove('active'); setAngle(0); renderSuggestions();
 });
 $('#autoStraight').addEventListener('click', () => {

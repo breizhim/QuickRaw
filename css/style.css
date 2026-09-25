@@ -208,3 +208,9 @@ table.meta td:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, mon
   z-index: 60; max-width: 90vw; font-size: .9rem; box-shadow: 0 6px 20px rgba(0,0,0,.4);
 }
 .toast.error { border-color: var(--danger); }
+
+/* Orientation du cadre */
+.chips.seg .chip { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.ori-ico { display: inline-block; border: 2px solid currentColor; border-radius: 2px; }
+.ori-ico.land { width: 18px; height: 12px; }
+.ori-ico.port { width: 12px; height: 18px; }

@@ -102,16 +102,20 @@
       </div>
 
       <div class="tab-body" data-body="crop" hidden>
+        <h2>Orientation du cadre</h2>
+        <div class="chips seg" id="orientChips">
+          <button class="chip" data-orient="landscape"><span class="ori-ico land"></span>Paysage</button>
+          <button class="chip" data-orient="portrait"><span class="ori-ico port"></span>Portrait</button>
+        </div>
         <h2>Format</h2>
         <div class="chips" id="aspectChips">
           <button class="chip active" data-aspect="free">Libre</button>
           <button class="chip" data-aspect="orig">Original</button>
-          <button class="chip" data-aspect="1">1:1</button>
-          <button class="chip" data-aspect="1.5">3:2</button>
-          <button class="chip" data-aspect="1.3333333">4:3</button>
-          <button class="chip" data-aspect="1.25">5:4</button>
-          <button class="chip" data-aspect="1.7777778">16:9</button>
-          <button class="chip" id="aspectSwap" title="Inverser portrait / paysage">⇄</button>
+          <button class="chip" data-aspect="1" data-l="1:1" data-p="1:1">1:1</button>
+          <button class="chip" data-aspect="1.5" data-l="3:2" data-p="2:3">3:2</button>
+          <button class="chip" data-aspect="1.3333333" data-l="4:3" data-p="3:4">4:3</button>
+          <button class="chip" data-aspect="1.25" data-l="5:4" data-p="4:5">5:4</button>
+          <button class="chip" data-aspect="1.7777778" data-l="16:9" data-p="9:16">16:9</button>
         </div>
         <h2>Rotation</h2>
         <div class="chips">
