@@ -26,6 +26,7 @@ const state = {
   aspect: null,               // null = libre, sinon rapport l/h en pixels
   aspectKey: 'free', portrait: false,
   loadId: 0, full: null, fullP: null, // image pleine résolution (SharedArrayBuffer) et sa promesse
+  view: null, views: {},      // rendus du fichier ouvert (RAW / boîtier), gardés pour basculer sans recalcul
   autoCrop: true,             // recadrage piloté automatiquement (non modifié à la main)
   analysis: null,             // résultat de suggestSettings
   straight: null,             // { angle, confidence }
@@ -56,6 +57,32 @@ const fmtSigned = (v, d = 0) => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v)
 
 // opts.source : 'raw' (défaut) ou 'camera' (JPEG intégré au RAW = rendu du boîtier)
 // opts.keepGeom : conserver le recadrage / la rotation (bascule RAW ↔ rendu boîtier)
+// Ce qui dépend du rendu affiché (RAW développé ou JPEG du boîtier) ; le
+// recadrage et les métadonnées sont communs aux deux
+const VIEW_KEYS = ['source', 'preview', 'full', 'fullP', 'SW', 'SH', 'params', 'base', 'analysis', 'straight'];
+let viewSeq = 0;
+
+// Bascule RAW ⇄ rendu boîtier : le rendu quitté est gardé en mémoire (y compris
+// sa pleine résolution et ses réglages) pour le réafficher instantanément
+function switchSource(target) {
+  const cur = state.view;
+  if (cur) for (const k of VIEW_KEYS) cur[k] = state[k];
+  const v = state.views[target];
+  if (!v) return openFile(state.file, { source: target, keepGeom: true });
+  for (const k of VIEW_KEYS) state[k] = v[k];
+  state.view = v;
+  before.canvas = null;
+  setupThumbs();
+  setupProcCanvas();
+  renderSuggestions();
+  syncSliders();
+  syncLookUI();
+  updateCameraButton();
+  setFullStatus(v.full || target === 'camera' ? '' : 'Dématriçage pleine résolution…');
+  scheduleRender(true);
+  $('#infoLine').textContent = infoText();
+}
+
 async function openFile(file, opts = {}) {
   if (!file) return;
   const camera = opts.source === 'camera' && !!state.cameraJpeg;
@@ -68,7 +95,7 @@ async function openFile(file, opts = {}) {
     busy(camera ? 'Décodage du rendu boîtier…' : 'Lecture des métadonnées…');
     await nextFrame();
     let data, width, height, raw = null, fullP, half = null, rawPreviewFor = null, exif, level, cameraMode, cameraJpeg = null;
-    const loadId = ++state.loadId;
+    const loadId = opts.keepGeom ? state.loadId : ++state.loadId; // même fichier : même chargement
     let isStd = false;
 
     if (camera) {
@@ -113,20 +140,27 @@ async function openFile(file, opts = {}) {
       sections: null, clipWarn: false, level, cameraMode, cameraJpeg, source: camera ? 'camera' : 'raw',
     });
     if (kept) Object.assign(state, kept);
+    if (!opts.keepGeom) state.views = {};
+    const view = { id: ++viewSeq };
+    state.views[state.source] = view; state.view = view;
     before.canvas = null;
+    // la pleine résolution arrive en arrière-plan : rangée dans son rendu, même
+    // si l'autre rendu est affiché entre-temps
     state.fullP = fullP
       .then(async (f) => {
         const sh = f.memory ? f : await engine.call({ type: 'share', data: f.data, width: f.width, height: f.height }, [f.data.buffer]);
         if (loadId !== state.loadId) return null;
         if (f.engine) console.info(`Pleine résolution : ${f.engine === 'wasm' ? 'dématriçage WebAssembly' : 'LibRaw'} en ${Math.round(f.ms)} ms`);
-        state.full = { data: sh.data, w: f.width, h: f.height, memory: sh.memory, layout: sh.layout };
-        state.SW = f.width; state.SH = f.height;
-        setFullStatus('');
-        return state.full;
+        Object.assign(view, { full: { data: sh.data, w: f.width, h: f.height, memory: sh.memory, layout: sh.layout }, SW: f.width, SH: f.height });
+        if (state.view === view) {
+          state.full = view.full; state.SW = f.width; state.SH = f.height;
+          setFullStatus('');
+        }
+        return view.full;
       })
       .catch((e) => {
         if (loadId !== state.loadId) return null;
-        setFullStatus('Échec du dématriçage pleine résolution');
+        if (state.view === view) setFullStatus('Échec du dématriçage pleine résolution');
         throw e;
       });
     state.fullP.catch(() => {});
@@ -265,7 +299,7 @@ function setupProcCanvas() {
 let glowCache = { key: '', glow: null };
 function glowFor(pr) {
   if (!pr.spec.hal) return null;
-  const key = [state.params.look, state.params.lookAmount, pr.spec.expMul, state.loadId].join('|');
+  const key = [state.params.look, state.params.lookAmount, pr.spec.expMul, state.view?.id].join('|');
   if (glowCache.key !== key) glowCache = { key, glow: buildGlowMap(state.preview.data, state.preview.w, state.preview.h, pr) };
   return glowCache.glow;
 }
@@ -953,7 +987,7 @@ function updateCameraButton() {
 }
 $('#cameraBtn').addEventListener('click', () => {
   if (!state.file || !state.cameraJpeg) return;
-  openFile(state.file, { source: state.source === 'camera' ? 'raw' : 'camera', keepGeom: true });
+  switchSource(state.source === 'camera' ? 'raw' : 'camera');
 });
 
 // ---------------------------------------------------------------- avant/après, écrêtage

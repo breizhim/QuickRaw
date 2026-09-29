@@ -43,7 +43,9 @@ envoyé sur un serveur, tout est traité sur l'appareil (ordinateur ou mobile).
   l'ouverture et proposé en suggestion. En lot, option « Selon le mode du
   boîtier ».
 - **Rendu boîtier** : bouton qui affiche (et exporte) le JPEG pleine
-  résolution intégré au RAW, c'est-à-dire exactement le rendu de l'appareil,
+  résolution intégré au RAW, c'est-à-dire exactement le rendu de l'appareil ;
+  les deux rendus restent en mémoire (bascule instantanée, chacun garde ses
+  réglages, recadrage commun) pour comparer,
   avec recadrage / rotation / réglages par-dessus. Fichier exporté suffixé
   `-boitier`.
 - **Réglages** : température, teinte, exposition, contraste, hautes lumières,
