@@ -1,11 +1,12 @@
 // Export JPEG pleine résolution en parallèle : l'image est découpée en bandes
 // horizontales (multiples de 8 lignes) encodées chacune par un worker ; les
 // bandes sont séparées par des marqueurs RST (intervalle = une ligne de blocs).
-import { exportMapping } from './pipeline.js';
+import { exportMapping, PRINT_LEVELS } from './pipeline.js';
 import { JpegEncoder, buildExif } from './jpeg-encoder.js';
+import { SRGB_ICC } from './icc.js';
 import { getModule, NSLOT } from './qr-wasm.js';
 
-export async function exportJpeg({ full, params, base, geom, quality = 100, exif = {}, onProgress, glow = null }) {
+export async function exportJpeg({ full, params, base, geom, quality = 100, exif = {}, onProgress, glow = null, print = 'off' }) {
   const { data, w: SW, h: SH } = full;
   const { outW, outH } = exportMapping(SW, SH, geom);
   const totalStrips = Math.ceil(outH / 8);
@@ -16,9 +17,9 @@ export async function exportJpeg({ full, params, base, geom, quality = 100, exif
   const module = full.memory ? await getModule() : null;
   const wasm = module ? { module, memory: full.memory, layout: full.layout } : null;
 
-  // En-têtes (SOI, APP0, APP1 EXIF, DQT, SOF, DHT, DRI, SOS)
+  // En-têtes (SOI, APP0 300 dpi, APP1 EXIF, APP2 profil ICC sRGB, DQT, SOF, DHT, DRI, SOS)
   const head = new JpegEncoder(outW, outH, {
-    quality, exif: buildExif({ ...exif, width: outW, height: outH }), restartInterval: Math.ceil(outW / 8),
+    quality, exif: buildExif({ ...exif, width: outW, height: outH, dpi: 300 }), icc: SRGB_ICC, dpi: 300, restartInterval: Math.ceil(outW / 8),
   }).takeBytes();
 
   let done = 0;
@@ -33,7 +34,7 @@ export async function exportJpeg({ full, params, base, geom, quality = 100, exif
         m.error ? reject(new Error(m.error)) : resolve(m.chunks);
       };
       wk.onerror = (e) => { wk.terminate(); reject(new Error(e.message || 'Erreur du worker d\'export')); };
-      wk.postMessage({ data, SW, SH, params, base, geom, quality, s0, s1, totalStrips, glow,
+      wk.postMessage({ data, SW, SH, params, base, geom, quality, s0, s1, totalStrips, glow, print,
         wasm: wasm && { ...wasm, slot: wasm.layout.slots + i * wasm.layout.slotSize } });
     }));
   }
@@ -41,3 +42,13 @@ export async function exportJpeg({ full, params, base, geom, quality = 100, exif
   const parts = [...head, ...bandChunks.flat(), new Uint8Array([0xff, 0xd9])];
   return { blob: new Blob(parts, { type: 'image/jpeg' }), parts, outW, outH, workers: n, engine: wasm ? 'wasm' : 'js' };
 }
+
+// Préférence « Préparer pour l'impression » (partagée entre l'éditeur et le lot)
+const PRINT_KEY = 'quickraw.print';
+export function getPrintPref() {
+  try { const v = localStorage.getItem(PRINT_KEY); return PRINT_LEVELS[v] ? v : 'off'; } catch { return 'off'; }
+}
+export function setPrintPref(v) {
+  try { localStorage.setItem(PRINT_KEY, v); } catch { /* stockage indisponible */ }
+}
+export const printSuffix = (level) => (PRINT_LEVELS[level]?.ev ? '-print' : '');

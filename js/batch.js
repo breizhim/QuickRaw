@@ -8,7 +8,7 @@ import { loadRaw } from './rawload.js';
 import { readExif } from './metadata.js';
 import { suggestSettings, detectStraighten } from './analysis.js';
 import { DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, inscribedCrop, buildGlowMap } from './pipeline.js';
-import { exportJpeg } from './exporter.js';
+import { exportJpeg, getPrintPref, setPrintPref, printSuffix } from './exporter.js';
 import { readLevel, levelAngle, readCameraMode } from './level.js';
 import { ZipBuilder, crc32 } from './zip.js';
 
@@ -79,6 +79,7 @@ export function initBatch({ getCurrent, toast }) {
     sel.value = cur?.params.look || 'none';
     amt.value = cur?.params.lookAmount ?? 100;
     syncAmount();
+    $('#bPrint').value = getPrintPref();
     const out = document.querySelector('input[name=bOut]:checked');
     if (!out || out.closest('label').hidden) {
       (canFolder && !isMobile ? $('#bOutFolder input') : canShareFiles && isMobile ? $('#bOutShare input') : $('#bOutZip input')).checked = true;
@@ -87,6 +88,9 @@ export function initBatch({ getCurrent, toast }) {
     setFiles(preselected);
     dlg.showModal();
   }
+
+  // même préférence que l'éditeur
+  $('#bPrint').addEventListener('change', (e) => { setPrintPref(e.target.value); window.dispatchEvent(new Event('quickraw-print')); });
 
   $('#bStart').addEventListener('click', async () => {
     const mode = document.querySelector('input[name=bMode]:checked').value;
@@ -102,7 +106,7 @@ export function initBatch({ getCurrent, toast }) {
       files: [...files], output, dir,
       look: sel.value, lookAmount: +amt.value,
       mode: mode === 'sync' && cur ? 'sync' : 'auto', syncParams: cur ? { ...cur.params } : null,
-      straighten: $('#bStraight').checked,
+      straighten: $('#bStraight').checked, print: $('#bPrint').value,
     });
   });
 
@@ -259,10 +263,10 @@ export function initBatch({ getCurrent, toast }) {
         const res = await exportJpeg({
           full, params, base, geom, quality: 100,
           glow: pr.spec.hal ? buildGlowMap(prev.data, prev.w, prev.h, pr) : null,
-          exif: exportExifFields(dec.raw, exif),
+          exif: exportExifFields(dec.raw, exif), print: opts.print,
           onProgress: (v) => { row.state.textContent = `Export JPG… ${Math.round(v * 100)} %`; progress(0.5 + v * 0.45); },
         });
-        const name = uniqueName(file.name.replace(/\.[^.]+$/, '') + '.jpg', usedNames);
+        const name = uniqueName(file.name.replace(/\.[^.]+$/, '') + printSuffix(opts.print) + '.jpg', usedNames);
         const size = res.blob.size;
 
         if (opts.output === 'folder') {

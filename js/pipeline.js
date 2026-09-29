@@ -265,7 +265,7 @@ const LUT_MAX = 64; // luminance linéaire max couverte (6 IL au-dessus du blanc
 
 // Construit le processeur de pixels pour un jeu de paramètres.
 // `base` : { exposure } offset d'exposition de base (ex. BaselineExposure DNG).
-export function makeProcessor(params, base = {}) {
+export function makeProcessor(params, base = {}, opts = {}) {
   const user = { ...DEFAULT_PARAMS, ...params };
   const look = LOOKS[user.look] && LOOKS[user.look].tone ? LOOKS[user.look] : null;
   const la = look ? Math.max(0, Math.min(100, user.lookAmount)) / 100 : 0;
@@ -321,7 +321,7 @@ export function makeProcessor(params, base = {}) {
   gain[0] = gain[1]; // pente à l'origine
 
   // LUT d'encodage sRGB 16 bits → 8 bits
-  const enc = ENC_LUT;
+  const enc = opts.enc || ENC_LUT;
   const sat = p.saturation / 100, vib = p.vibrance / 100;
   const K = (LUT_N - 1) / Math.sqrt(LUT_MAX);
 
@@ -414,6 +414,36 @@ export const ENC_LUT = (() => {
   for (let i = 0; i < 65536; i++) t[i] = Math.round(srgbEncode(i / 65535) * 255);
   return t;
 })();
+
+// ---------- Préparation pour l'impression ----------
+// Le papier (réfléchissant) rend les ombres et tons moyens plus sombres qu'un
+// écran rétroéclairé : on les remonte par une courbe douce appliquée à la
+// sortie, sans toucher au noir ni au blanc (pas de hautes lumières brûlées).
+// Gain visé sur le gris moyen, en IL.
+export const PRINT_LEVELS = {
+  off: { name: 'Non', ev: 0 },
+  light: { name: 'Léger', ev: 0.2 },
+  normal: { name: 'Normal', ev: 0.35 },
+  strong: { name: 'Fort', ev: 0.5 },
+};
+// v' = v + k·v·(1−v)^1.5 (espace sRGB encodé) : effet maximal vers 40 %,
+// monotone, 0 et 1 fixes
+export function printCurve(v, level) {
+  const ev = PRINT_LEVELS[level]?.ev || 0;
+  if (!ev) return v;
+  const g = srgbEncode(0.18), k = (srgbEncode(0.18 * 2 ** ev) - g) / (g * (1 - g) ** 1.5);
+  return v + k * v * (1 - v) ** 1.5;
+}
+const printLuts = {};
+export function encLutFor(level) {
+  if (!PRINT_LEVELS[level]?.ev) return ENC_LUT;
+  if (!printLuts[level]) {
+    const t = new Uint8Array(65536);
+    for (let i = 0; i < 65536; i++) t[i] = Math.round(Math.min(1, printCurve(srgbEncode(i / 65535), level)) * 255);
+    printLuts[level] = t;
+  }
+  return printLuts[level];
+}
 
 // Traite un tampon linéaire RVB (Float32 0..1) vers RGBA 8 bits.
 // sp (facultatif) : { pw, vig, glow } — position des pixels pour le vignettage et le halo

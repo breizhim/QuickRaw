@@ -132,17 +132,21 @@ export class JpegEncoder {
     this.dcY = 0; this.dcU = 0; this.dcV = 0;
     this.blkY = new Float64Array(64); this.blkU = new Float64Array(64); this.blkV = new Float64Array(64);
     this.qout = new Int32Array(64);
-    if (opts.headers !== false) this.writeHeaders(opts.exif || null, opts.restartInterval || 0);
+    if (opts.headers !== false) this.writeHeaders(opts.exif || null, opts.restartInterval || 0, opts);
   }
 
-  writeHeaders(exif, restartInterval = 0) {
-    const o = this.out;
+  writeHeaders(exif, restartInterval = 0, opts = {}) {
+    const o = this.out, dpi = opts.dpi || 0;
     o.word(0xffd8); // SOI
-    // APP0 JFIF
+    // APP0 JFIF (densité en points par pouce si dpi, sinon simple rapport 1:1)
     o.word(0xffe0); o.word(16); o.bytes([0x4a, 0x46, 0x49, 0x46, 0]); o.byte(1); o.byte(1);
-    o.byte(0); o.word(1); o.word(1); o.byte(0); o.byte(0);
+    o.byte(dpi ? 1 : 0); o.word(dpi || 1); o.word(dpi || 1); o.byte(0); o.byte(0);
     if (exif) { // APP1 EXIF
       o.word(0xffe1); o.word(exif.length + 2); o.bytes(exif);
+    }
+    if (opts.icc) { // APP2 profil ICC (un seul segment : profil < 64 Ko)
+      const sig = [0x49, 0x43, 0x43, 0x5f, 0x50, 0x52, 0x4f, 0x46, 0x49, 0x4c, 0x45, 0]; // "ICC_PROFILE\0"
+      o.word(0xffe2); o.word(2 + sig.length + 2 + opts.icc.length); o.bytes(sig); o.byte(1); o.byte(1); o.bytes(opts.icc);
     }
     // DQT
     o.word(0xffdb); o.word(132);
@@ -317,6 +321,9 @@ export function buildExif(f) {
   ifd0.push([0x0131, 2, ascii(f.software || 'QuickRaw')]);
   if (f.dateTime) ifd0.push([0x0132, 2, ascii(f.dateTime)]);
   if (f.artist) ifd0.push([0x013b, 2, ascii(f.artist)]);
+  if (f.dpi) { // résolution d'impression
+    ifd0.push([0x011a, 5, [[f.dpi, 1]]]); ifd0.push([0x011b, 5, [[f.dpi, 1]]]); ifd0.push([0x0128, 3, [2]]);
+  }
   const et = rat(f.exposureTime); if (et) exif.push([0x829a, 5, [et]]);
   const fn = rat(f.fNumber); if (fn) exif.push([0x829d, 5, [fn]]);
   if (f.iso > 0) exif.push([0x8827, 3, [Math.min(65535, Math.round(f.iso))]]);

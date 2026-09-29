@@ -2,10 +2,10 @@ import { engine } from './engine.js';
 import { isStandardImage, decodeStandard, decodeEmbeddedJpeg, exportExifFields, baselineExposure } from './decode.js';
 import {
   DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, orientedSize, vignetteMap, buildGlowMap,
-  inscribedCrop, cropInside, srgbDecode,
+  inscribedCrop, cropInside, srgbDecode, PRINT_LEVELS,
 } from './pipeline.js';
 import { renderedStats, suggestSettings, detectStraighten, SCOPE_GAIN } from './analysis.js';
-import { exportJpeg } from './exporter.js';
+import { exportJpeg, getPrintPref, setPrintPref, printSuffix } from './exporter.js';
 import { readLevel, levelAngle, readCameraMode } from './level.js';
 import { initBatch } from './batch.js';
 import { loadRaw } from './rawload.js';
@@ -995,8 +995,27 @@ $('#metaCopy').addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------- export
-const baseName = () => (state.file?.name || 'image').replace(/\.[^.]+$/, '') + (state.source === 'camera' ? '-boitier' : '');
+const baseName = () => (state.file?.name || 'image').replace(/\.[^.]+$/, '') + (state.source === 'camera' ? '-boitier' : '') + printSuffix(getPrintPref());
 let lastExportUrl = null, lastExportFile = null;
+
+// Préparer pour l'impression : ne touche qu'au fichier exporté
+const PRINT_HINTS = {
+  off: 'Rendu écran, sans modification. Les fichiers exportés contiennent toujours le profil sRGB et 300 dpi.',
+  light: 'Tons moyens et ombres remontés d\'environ +0,2 IL, blancs et noirs intacts. Pour un labo photo. Fichier suffixé « -print ».',
+  normal: 'Tons moyens et ombres remontés d\'environ +0,35 IL, blancs et noirs intacts. Fichier suffixé « -print ».',
+  strong: 'Tons moyens et ombres remontés d\'environ +0,5 IL, blancs et noirs intacts. Pour une imprimante maison ou un papier mat. Fichier suffixé « -print ».',
+};
+function syncPrintUI() {
+  const v = getPrintPref();
+  document.querySelectorAll('#printChips .chip').forEach((c) => {
+    const on = c.dataset.print === v;
+    c.classList.toggle('active', on); c.setAttribute('aria-checked', String(on)); c.setAttribute('role', 'radio');
+  });
+  $('#printHint').textContent = PRINT_HINTS[v] + (v === 'off' ? '' : ' L\'affichage à l\'écran n\'est pas modifié.');
+}
+document.querySelectorAll('#printChips .chip').forEach((c) => c.addEventListener('click', () => { setPrintPref(c.dataset.print); syncPrintUI(); }));
+syncPrintUI();
+window.addEventListener('quickraw-print', syncPrintUI);
 
 
 $('#exportBtn').addEventListener('click', async () => {
@@ -1011,7 +1030,7 @@ $('#exportBtn').addEventListener('click', async () => {
     busy('Export JPG pleine résolution…', 0);
     const res = await exportJpeg({
       full: state.full, params: state.params, base: state.base, geom: state.geom, quality: 100, exif,
-      glow: glowFor(makeProcessor(state.params, state.base)),
+      glow: glowFor(makeProcessor(state.params, state.base)), print: getPrintPref(),
       onProgress: (v) => busy(`Export JPG pleine résolution… ${Math.round(v * 100)} %`, v),
     });
     busy(false);
@@ -1020,7 +1039,7 @@ $('#exportBtn').addEventListener('click', async () => {
     lastExportUrl = URL.createObjectURL(blob);
     const name = baseName() + '.jpg';
     lastExportFile = new File([blob], name, { type: 'image/jpeg' });
-    $('#exportInfo').textContent = `${name} — ${res.outW} × ${res.outH} px, qualité 100 %, ${(blob.size / 1048576).toFixed(1)} Mo (${((performance.now() - t0) / 1000).toFixed(1)} s${res.engine === 'wasm' ? ', moteur WebAssembly' : ''}).`;
+    $('#exportInfo').textContent = `${name} — ${res.outW} × ${res.outH} px, qualité 100 %${getPrintPref() !== 'off' ? `, préparé pour l'impression (${PRINT_LEVELS[getPrintPref()].name.toLowerCase()})` : ''}, ${(blob.size / 1048576).toFixed(1)} Mo (${((performance.now() - t0) / 1000).toFixed(1)} s${res.engine === 'wasm' ? ', moteur WebAssembly' : ''}).`;
     const dl = $('#exportDownload'); dl.href = lastExportUrl; dl.download = name;
     $('#exportShare').hidden = !(navigator.canShare && navigator.canShare({ files: [lastExportFile] }));
     $('#exportDialog').showModal();

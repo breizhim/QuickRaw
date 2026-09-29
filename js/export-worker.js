@@ -2,7 +2,7 @@
 // résolution (lignes de blocs [s0, s1[). Plusieurs workers travaillent en
 // parallèle sur la même image (SharedArrayBuffer) ; les bandes sont séparées
 // par des marqueurs RST, ce qui permet de simplement les concaténer.
-import { makeProcessor, exportMapping, ENC_LUT, vignetteWeight, vigMul, sampleGlow } from './pipeline.js';
+import { makeProcessor, exportMapping, encLutFor, vignetteWeight, vigMul, sampleGlow } from './pipeline.js';
 import { setupSlot } from './qr-wasm.js';
 import { JpegEncoder } from './jpeg-encoder.js';
 
@@ -32,8 +32,8 @@ self.onmessage = ({ data: msg }) => {
   }
 };
 
-function encodeBand({ data, SW, SH, params, base, geom, quality, s0, s1, totalStrips, glow }) {
-  const proc = makeProcessor(params, base), px = proc.pixel, amt = proc.spec.vigAmt;
+function encodeBand({ data, SW, SH, params, base, geom, quality, s0, s1, totalStrips, glow, print }) {
+  const proc = makeProcessor(params, base, { enc: encLutFor(print) }), px = proc.pixel, amt = proc.spec.vigAmt;
   const gm = glow && proc.spec.hal ? glow : null;
   const map = exportMapping(SW, SH, geom);
   const { outW, outH } = map;
@@ -87,11 +87,11 @@ function encodeBand({ data, SW, SH, params, base, geom, quality, s0, s1, totalSt
 
 // Même travail, par le module WebAssembly (SIMD) : l'image est lue directement
 // dans la mémoire partagée du module.
-function encodeBandWasm({ SW, SH, params, base, geom, quality, s0, s1, totalStrips, wasm, glow }) {
+function encodeBandWasm({ SW, SH, params, base, geom, quality, s0, s1, totalStrips, wasm, glow, print }) {
   const { module, memory, layout, slot } = wasm;
   const pr = makeProcessor(params, base);
   const map = exportMapping(SW, SH, geom);
-  const X = setupSlot(module, memory, slot, pr.spec, ENC_LUT, map, !geom.angle, quality, glow);
+  const X = setupSlot(module, memory, slot, pr.spec, encLutFor(print), map, !geom.angle, quality, glow);
   const chunks = [];
   let lastReport = 0, done = 0;
   for (let s = s0; s < s1; s++) {

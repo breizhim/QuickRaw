@@ -75,6 +75,13 @@ envoyé sur un serveur, tout est traité sur l'appareil (ordinateur ou mobile).
   un canvas (limité en taille sur mobile). Les
   principales données EXIF (appareil, objectif, date, vitesse, ouverture, ISO,
   focale) sont recopiées. Sur mobile, bouton *Partager / Enregistrer*.
+- **Préparer pour l'impression** (réglages et traitement par lot) : Non /
+  Léger / Normal / Fort. Remonte les tons moyens et les ombres (environ +0,2 /
+  +0,35 / +0,5 IL sur le gris moyen) par une courbe douce, noir et blanc
+  inchangés, pour compenser le papier plus sombre qu'un écran. S'applique
+  uniquement au fichier exporté (suffixe `-print`). Tous les JPG exportés
+  contiennent le **profil ICC sRGB** (`js/icc.js`) et une résolution de
+  **300 dpi**.
 - **Traitement par lot** (bouton *Lot*, ou sélection / glisser-déposer de
   plusieurs fichiers) : filtre + suggestions automatiques photo par photo, ou
   réglages de la photo ouverte appliqués à toute la série ; redressage

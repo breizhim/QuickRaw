@@ -99,6 +99,14 @@
           <ul id="suggestList" class="suggest-list"></ul>
         </div>
         <div id="sliders"></div>
+        <h2>Préparer pour l'impression</h2>
+        <div class="chips seg" id="printChips" role="radiogroup" aria-label="Préparer pour l'impression">
+          <button class="chip" data-print="off">Non</button>
+          <button class="chip" data-print="light">Léger</button>
+          <button class="chip" data-print="normal">Normal</button>
+          <button class="chip" data-print="strong">Fort</button>
+        </div>
+        <p class="hint" id="printHint"></p>
         <div class="row-actions">
           <button class="btn small" id="resetBtn">Réinitialiser les réglages</button>
         </div>
@@ -226,6 +234,14 @@
           <span><b>Archive ZIP</b><small id="bZipHint"></small></span></label>
         <label class="b-opt" id="bOutShare"><input type="radio" name="bOut" value="share">
           <span><b>Partager / Enregistrer dans Photos</b><small>Par groupes de 10 photos, via la feuille de partage du téléphone.</small></span></label>
+
+        <h2>Préparer pour l'impression</h2>
+        <select id="bPrint" class="b-select" aria-label="Préparer pour l'impression">
+          <option value="off">Non (rendu écran)</option>
+          <option value="light">Léger — labo photo</option>
+          <option value="normal">Normal</option>
+          <option value="strong">Fort — imprimante maison, papier mat</option>
+        </select>
 
         <p class="hint" id="bEstimate"></p>
         <div class="row-actions">
