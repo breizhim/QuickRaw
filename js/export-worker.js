@@ -2,7 +2,7 @@
 // résolution (lignes de blocs [s0, s1[). Plusieurs workers travaillent en
 // parallèle sur la même image (SharedArrayBuffer) ; les bandes sont séparées
 // par des marqueurs RST, ce qui permet de simplement les concaténer.
-import { makeProcessor, exportMapping, ENC_LUT } from './pipeline.js';
+import { makeProcessor, exportMapping, ENC_LUT, vignetteWeight, vigMul, sampleGlow } from './pipeline.js';
 import { setupSlot } from './qr-wasm.js';
 import { JpegEncoder } from './jpeg-encoder.js';
 
@@ -32,8 +32,9 @@ self.onmessage = ({ data: msg }) => {
   }
 };
 
-function encodeBand({ data, SW, SH, params, base, geom, quality, s0, s1, totalStrips }) {
-  const px = makeProcessor(params, base).pixel;
+function encodeBand({ data, SW, SH, params, base, geom, quality, s0, s1, totalStrips, glow }) {
+  const proc = makeProcessor(params, base), px = proc.pixel, amt = proc.spec.vigAmt;
+  const gm = glow && proc.spec.hal ? glow : null;
   const map = exportMapping(SW, SH, geom);
   const { outW, outH } = map;
   const enc = new JpegEncoder(outW, outH, { quality, headers: false });
@@ -46,16 +47,18 @@ function encodeBand({ data, SW, SH, params, base, geom, quality, s0, s1, totalSt
     const y0 = s * 8, rows = Math.min(8, outH - y0);
     for (let r = 0; r < rows; r++) {
       const { sx, sy, dx, dy } = map.row(y0 + r);
+      const ny = (y0 + r + 0.5) * 2 / outH - 1;
       let o = r * outW * 3;
       for (let u = 0; u < outW; u++, o += 3) {
         let X = sx + dx * u - 0.5, Y = sy + dy * u - 0.5;
+        const vm = amt ? vigMul(amt, vignetteWeight((u + 0.5) * 2 / outW - 1, ny)) : 1;
         if (identity) {
           // correspondance exacte pixel à pixel (quarts de tour / miroir / recadrage)
           let xi = Math.round(X), yi = Math.round(Y);
           xi = xi < 0 ? 0 : xi >= SW ? SW - 1 : xi;
           yi = yi < 0 ? 0 : yi >= SH ? SH - 1 : yi;
           const i = (yi * SW + xi) * 3;
-          px(data[i] * sc, data[i + 1] * sc, data[i + 2] * sc, strip, o);
+          px(data[i] * sc, data[i + 1] * sc, data[i + 2] * sc, strip, o, vm, gm ? sampleGlow(gm, (xi + 0.5) / SW, (yi + 0.5) / SH) : 0);
         } else {
           // bilinéaire
           if (X < 0) X = 0; else if (X > SW - 1) X = SW - 1;
@@ -68,7 +71,7 @@ function encodeBand({ data, SW, SH, params, base, geom, quality, s0, s1, totalSt
             data[a] * w00 + data[b] * w10 + data[c] * w01 + data[d] * w11,
             data[a + 1] * w00 + data[b + 1] * w10 + data[c + 1] * w01 + data[d + 1] * w11,
             data[a + 2] * w00 + data[b + 2] * w10 + data[c + 2] * w01 + data[d + 2] * w11,
-            strip, o);
+            strip, o, vm, gm ? sampleGlow(gm, (X + 0.5) / SW, (Y + 0.5) / SH) : 0);
         }
       }
     }
@@ -84,11 +87,11 @@ function encodeBand({ data, SW, SH, params, base, geom, quality, s0, s1, totalSt
 
 // Même travail, par le module WebAssembly (SIMD) : l'image est lue directement
 // dans la mémoire partagée du module.
-function encodeBandWasm({ SW, SH, params, base, geom, quality, s0, s1, totalStrips, wasm }) {
+function encodeBandWasm({ SW, SH, params, base, geom, quality, s0, s1, totalStrips, wasm, glow }) {
   const { module, memory, layout, slot } = wasm;
   const pr = makeProcessor(params, base);
   const map = exportMapping(SW, SH, geom);
-  const X = setupSlot(module, memory, slot, pr.spec, ENC_LUT, map, !geom.angle, quality);
+  const X = setupSlot(module, memory, slot, pr.spec, ENC_LUT, map, !geom.angle, quality, glow);
   const chunks = [];
   let lastReport = 0, done = 0;
   for (let s = s0; s < s1; s++) {

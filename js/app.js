@@ -1,12 +1,12 @@
 import { engine } from './engine.js';
-import { isStandardImage, decodeStandard, exportExifFields, baselineExposure } from './decode.js';
+import { isStandardImage, decodeStandard, decodeEmbeddedJpeg, exportExifFields, baselineExposure } from './decode.js';
 import {
-  DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, orientedSize,
+  DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, orientedSize, vignetteMap, buildGlowMap,
   inscribedCrop, cropInside, srgbDecode,
 } from './pipeline.js';
 import { renderedStats, suggestSettings, detectStraighten, SCOPE_GAIN } from './analysis.js';
 import { exportJpeg } from './exporter.js';
-import { readLevel, levelAngle } from './level.js';
+import { readLevel, levelAngle, readCameraMode } from './level.js';
 import { initBatch } from './batch.js';
 import { loadRaw } from './rawload.js';
 import { readExif, buildSections, renderSections, sectionsToJSON } from './metadata.js';
@@ -54,47 +54,65 @@ const fmtSigned = (v, d = 0) => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v)
 
 // ---------------------------------------------------------------- ouverture
 
-async function openFile(file) {
+// opts.source : 'raw' (défaut) ou 'camera' (JPEG intégré au RAW = rendu du boîtier)
+// opts.keepGeom : conserver le recadrage / la rotation (bascule RAW ↔ rendu boîtier)
+async function openFile(file, opts = {}) {
   if (!file) return;
+  const camera = opts.source === 'camera' && !!state.cameraJpeg;
   if (!window.crossOriginIsolated) {
     toast("Le décodeur RAW nécessite une page « cross-origin isolated ». Rechargez la page (ou servez-la via HTTPS / tools/serve.mjs).", true, 9000);
   }
+  const kept = opts.keepGeom && state.preview
+    ? { geom: structuredClone(state.geom), aspect: state.aspect, aspectKey: state.aspectKey, autoCrop: state.autoCrop, portrait: state.portrait } : null;
   try {
-    busy('Lecture des métadonnées…');
+    busy(camera ? 'Décodage du rendu boîtier…' : 'Lecture des métadonnées…');
     await nextFrame();
-    const buf = await file.arrayBuffer();
-    // (avant LibRaw, qui transfère — et donc détache — le tampon vers son worker)
-    const exif = await readExif(buf);
-    const isStd = isStandardImage(buf);
-    const level = readLevel(exif); // niveau électronique de l'appareil (Ricoh GR, Pentax…)
-    let data, width, height, raw = null, fullP, half = null, rawPreviewFor = null;
+    let data, width, height, raw = null, fullP, half = null, rawPreviewFor = null, exif, level, cameraMode, cameraJpeg = null;
     const loadId = ++state.loadId;
+    let isStd = false;
 
-    if (isStd) {
-      busy('Décodage de l\'image…');
-      ({ data, width, height } = await decodeStandard(file));
+    if (camera) {
+      // même fichier : on réutilise les métadonnées déjà lues
+      ({ exif, level, cameraMode, cameraJpeg, raw } = state);
+      ({ data, width, height } = await decodeEmbeddedJpeg(cameraJpeg.data, raw?.flip | 0));
       fullP = Promise.resolve({ data, width, height });
     } else {
-      // 1) Décodage rapide en demi-taille (sans dématriçage) pour éditer tout de suite
-      busy('Décodage du RAW…');
-      const r = await loadRaw(buf);
-      raw = r.meta;
-      rawPreviewFor = r.previewFor;
-      half = { w: r.half.width, h: r.half.height };
-      // dimensions pleine résolution (le demi-format est exactement la moitié)
-      width = half.w * 2; height = half.h * 2;
-      fullP = r.fullP;
+      const buf = await file.arrayBuffer();
+      // (avant LibRaw, qui transfère — et donc détache — le tampon vers son worker)
+      exif = await readExif(buf);
+      isStd = isStandardImage(buf);
+      level = readLevel(exif);        // niveau électronique de l'appareil (Ricoh GR, Pentax…)
+      cameraMode = readCameraMode(exif); // mode « Image Control » du boîtier (Ricoh GR, Pentax)
+      if (isStd) {
+        busy('Décodage de l\'image…');
+        ({ data, width, height } = await decodeStandard(file));
+        fullP = Promise.resolve({ data, width, height });
+      } else {
+        // 1) Décodage rapide en demi-taille (sans dématriçage) pour éditer tout de suite
+        busy('Décodage du RAW…');
+        const r = await loadRaw(buf);
+        raw = r.meta;
+        rawPreviewFor = r.previewFor;
+        cameraJpeg = r.thumb;
+        half = { w: r.half.width, h: r.half.height };
+        // dimensions pleine résolution (le demi-format est exactement la moitié)
+        width = half.w * 2; height = half.h * 2;
+        fullP = r.fullP;
+      }
     }
 
     busy('Préparation de l\'aperçu…');
     const pw = half ? half.w : width, ph = half ? half.h : height;
     const res = rawPreviewFor ? await rawPreviewFor(PREVIEW_MAX) : await engine.call({ type: 'preview', data, width: pw, height: ph, previewMax: PREVIEW_MAX });
+    // filtre équivalent au mode du boîtier (ex. Hard Monotone), appliqué d'emblée sur le RAW
+    const startLook = !camera && !isStd && cameraMode?.look ? cameraMode.look : 'none';
     Object.assign(state, {
       file, exif, raw, SW: width, SH: height, preview: res.preview, full: null,
-      params: { ...DEFAULT_PARAMS }, geom: structuredClone(DEFAULT_GEOM), aspect: null, autoCrop: true, portrait: height > width,
-      base: { exposure: baselineExposure(raw) },
-      sections: null, clipWarn: false, level,
+      params: { ...DEFAULT_PARAMS, look: startLook }, geom: structuredClone(DEFAULT_GEOM), aspect: null, autoCrop: true, portrait: height > width,
+      base: { exposure: camera ? 0 : baselineExposure(raw) },
+      sections: null, clipWarn: false, level, cameraMode, cameraJpeg, source: camera ? 'camera' : 'raw',
     });
+    if (kept) Object.assign(state, kept);
     before.canvas = null;
     state.fullP = fullP
       .then(async (f) => {
@@ -112,7 +130,7 @@ async function openFile(file) {
         throw e;
       });
     state.fullP.catch(() => {});
-    if (!isStd) setFullStatus('Dématriçage pleine résolution…');
+    if (!isStd && !camera) setFullStatus('Dématriçage pleine résolution…');
 
     busy('Analyse colorimétrique…');
     await nextFrame();
@@ -125,10 +143,14 @@ async function openFile(file) {
     setupProcCanvas();
     renderSuggestions();
     syncSliders();
-    setAspectChip('free');
+    syncLookUI();
+    if (kept) { setAspectChip(); $('#flipH').classList.toggle('active', state.geom.flipH); setAngle(state.geom.angle); }
+    else setAspectChip('free');
+    updateCameraButton();
     scheduleRender(true);
     $('#infoLine').textContent = infoText();
     busy(false);
+    if (camera) toast(`Rendu du boîtier${state.cameraMode ? ` (mode « ${state.cameraMode.name} »)` : ''} : JPEG intégré au RAW, ${width} × ${height}.`, false, 5000);
   } catch (e) {
     console.error(e);
     busy(false);
@@ -157,6 +179,7 @@ function computeAnalysis() {
   if (state.base.exposure) state.analysis.auto.exposure = round2(state.analysis.auto.exposure - state.base.exposure);
   fixExposureSuggestion();
   addStraightSuggestion();
+  addCameraModeSuggestion();
 }
 
 function fixExposureSuggestion() {
@@ -166,6 +189,18 @@ function fixExposureSuggestion() {
     if (Math.abs(ev) < 0.1) { state.analysis.suggestions = state.analysis.suggestions.filter((x) => x !== s); state.analysis.auto.exposure = 0; }
     else { s.set = { exposure: ev }; s.text = s.text.replace(/Exposition [^ ]+ IL/, `Exposition ${fmtSigned(ev, 2)} IL`); }
   }
+}
+
+// Mode « Image Control » du boîtier (Ricoh GR…) : filtre équivalent, ou rendu exact du boîtier
+function addCameraModeSuggestion() {
+  const m = state.cameraMode;
+  if (!m || state.source === 'camera' || /^(Standard|Natural)$/.test(m.name)) return;
+  const exact = state.cameraJpeg ? ' Pour le rendu exact du boîtier, utilisez le bouton « Rendu boîtier ».' : '';
+  state.analysis.suggestions.unshift(m.look
+    ? { id: 'camera', title: `Mode du boîtier : ${m.name}`, icon: '📷', set: { look: m.look },
+        text: `La photo a été prise en mode « ${m.name} » : filtre équivalent « ${LOOKS[m.look].name} » (approché).${exact}` }
+    : { id: 'camera', title: `Mode du boîtier : ${m.name}`, icon: '📷', set: null,
+        text: `La photo a été prise en mode « ${m.name} », sans filtre équivalent ici.${exact}` });
 }
 
 function addStraightSuggestion() {
@@ -199,6 +234,7 @@ function infoText() {
     if (r.focal_len) parts.push(`${Math.round(r.focal_len)} mm`);
   }
   parts.push(`${state.SW}×${state.SH}`);
+  if (state.source === 'camera') parts.unshift('📷 Rendu boîtier');
   return parts.join(' · ');
 }
 
@@ -225,10 +261,21 @@ function setupProcCanvas() {
   proc.img = proc.ctx.createImageData(w, h);
 }
 
+// Carte du halo (CineStill…) : recalculée seulement si le filtre ou l'exposition changent
+let glowCache = { key: '', glow: null };
+function glowFor(pr) {
+  if (!pr.spec.hal) return null;
+  const key = [state.params.look, state.params.lookAmount, pr.spec.expMul, state.loadId].join('|');
+  if (glowCache.key !== key) glowCache = { key, glow: buildGlowMap(state.preview.data, state.preview.w, state.preview.h, pr) };
+  return glowCache.glow;
+}
+let lastGeomKey = '';
 function renderProcessed() {
   const { data, w, h } = state.preview;
   const pr = makeProcessor(state.params, state.base);
-  processRGBA(pr, data, proc.img.data, w * h);
+  lastGeomKey = JSON.stringify(state.geom);
+  const sp = { pw: w, vig: pr.spec.vigAmt ? vignetteMap(state.SW, state.SH, state.geom, w, h) : null, glow: glowFor(pr) };
+  processRGBA(pr, data, proc.img.data, w * h, sp);
   // proc.img reste « propre » (histogramme, statistiques) ; l'alerte d'écrêtage
   // est peinte sur une copie
   proc.ctx.putImageData(state.clipWarn ? clipOverlay(proc.img) : proc.img, 0, 0);
@@ -285,6 +332,8 @@ function scheduleRender(process = false) {
   requestAnimationFrame(() => {
     renderQueued = false;
     if (!state.preview) return;
+    // le vignettage suit le cadre : un recadrage impose de recalculer l'aperçu
+    if (!needProcess && state.params.vignette + (LOOKS[state.params.look]?.tone?.vignette || 0) !== 0 && JSON.stringify(state.geom) !== lastGeomKey) needProcess = true;
     if (needProcess) {
       needProcess = false;
       renderProcessed();
@@ -496,6 +545,8 @@ const SLIDERS = [
   { group: 'Couleur' },
   { key: 'vibrance', label: 'Vibrance', min: -100, max: 100, step: 1 },
   { key: 'saturation', label: 'Saturation', min: -100, max: 100, step: 1, cls: 'track-sat' },
+  { group: 'Effets' },
+  { key: 'vignette', label: 'Vignettage', min: -100, max: 100, step: 1 },
 ];
 
 function buildSliders() {
@@ -531,13 +582,14 @@ function syncSliders() {
 
 // ---------------------------------------------------------------- suggestions
 function isApplied(s) {
-  if (s.set) return Object.entries(s.set).every(([k, v]) => Math.abs(state.params[k] - v) < 1e-6);
+  if (s.set) return Object.entries(s.set).every(([k, v]) => (typeof v === 'number' ? Math.abs(state.params[k] - v) < 1e-6 : state.params[k] === v));
   if (s.geom) return Math.abs(state.geom.angle - s.geom.angle) < 0.01;
   return true;
 }
 function applySuggestion(s) {
   if (s.set) Object.assign(state.params, s.set);
   if (s.geom) setAngle(s.geom.angle);
+  if (s.set && 'look' in s.set) { lookChanged(); return; } // le filtre change aussi les suggestions
   syncSliders(); scheduleRender(true); renderSuggestions();
 }
 function renderSuggestions() {
@@ -563,7 +615,7 @@ function renderSuggestions() {
 }
 $('#autoBtn').addEventListener('click', () => {
   if (!state.analysis) return;
-  for (const s of state.analysis.suggestions) { if (s.set) Object.assign(state.params, s.set); if (s.geom) setAngle(s.geom.angle); }
+  for (const s of state.analysis.suggestions) { if (s.set && !('look' in s.set)) Object.assign(state.params, s.set); if (s.geom) setAngle(s.geom.angle); }
   syncSliders(); scheduleRender(true); renderSuggestions();
   toast('Suggestions appliquées. Ajustez librement les curseurs.');
 });
@@ -873,6 +925,22 @@ $('#autoStraight').addEventListener('click', () => {
     : `Redressé de ${fmtSigned(a, 2)}° d'après les lignes horizontales / verticales dominantes (fiabilité ${Math.min(100, Math.round(st.confidence * 3))} %).`;
 });
 
+// ---------------------------------------------------------------- rendu du boîtier (JPEG intégré)
+function updateCameraButton() {
+  const b = $('#cameraBtn'), j = state.cameraJpeg;
+  b.hidden = !j;
+  if (!j) return;
+  b.textContent = state.source === 'camera' ? '↩ RAW' : 'Rendu boîtier';
+  b.setAttribute('aria-pressed', String(state.source === 'camera'));
+  b.title = state.source === 'camera'
+    ? 'Revenir au développement du RAW'
+    : `Afficher le rendu du boîtier (JPEG intégré, ${j.width} × ${j.height}${state.cameraMode ? `, mode « ${state.cameraMode.name} »` : ''})`;
+}
+$('#cameraBtn').addEventListener('click', () => {
+  if (!state.file || !state.cameraJpeg) return;
+  openFile(state.file, { source: state.source === 'camera' ? 'raw' : 'camera', keepGeom: true });
+});
+
 // ---------------------------------------------------------------- avant/après, écrêtage
 const beforeBtn = $('#beforeBtn');
 const setBefore = (v) => { if (state.showBefore !== v) { state.showBefore = v; beforeBtn.classList.toggle('active', v); scheduleRender(); } };
@@ -895,7 +963,7 @@ window.addEventListener('keyup', (e) => { if (e.key === '\\') setBefore(false); 
 
 // ---------------------------------------------------------------- métadonnées
 $('#metaBtn').addEventListener('click', () => {
-  if (!state.sections) state.sections = buildSections(state.file, state.exif, state.raw, { size: `${state.SW} × ${state.SH}`, level: state.level });
+  if (!state.sections) state.sections = buildSections(state.file, state.exif, state.raw, { size: `${state.SW} × ${state.SH}`, level: state.level, cameraJpeg: state.cameraJpeg });
   $('#metaSearch').value = '';
   renderSections($('#metaBody'), state.sections);
   $('#metaDialog').showModal();
@@ -912,7 +980,7 @@ $('#metaCopy').addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------- export
-const baseName = () => (state.file?.name || 'image').replace(/\.[^.]+$/, '');
+const baseName = () => (state.file?.name || 'image').replace(/\.[^.]+$/, '') + (state.source === 'camera' ? '-boitier' : '');
 let lastExportUrl = null, lastExportFile = null;
 
 
@@ -928,6 +996,7 @@ $('#exportBtn').addEventListener('click', async () => {
     busy('Export JPG pleine résolution…', 0);
     const res = await exportJpeg({
       full: state.full, params: state.params, base: state.base, geom: state.geom, quality: 100, exif,
+      glow: glowFor(makeProcessor(state.params, state.base)),
       onProgress: (v) => busy(`Export JPG pleine résolution… ${Math.round(v * 100)} %`, v),
     });
     busy(false);

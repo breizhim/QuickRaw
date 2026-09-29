@@ -25,6 +25,8 @@ enum {
   P_LSAT = 12, P_LLUM = 24, P_LSHIFT = 36,
   P_SPLIT = 48, P_SS = 49, P_SH = 52, P_KS = 55, P_KH = 56,
   P_IDENT = 57, P_SX0, P_SY0, P_DUX, P_DUY, P_DVX, P_DVY,
+  P_VIG = 64, P_OUTW, P_OUTH,              // vignettage : intensité (-1..1), taille de sortie
+  P_GLOW = 67, P_GW, P_GH, P_HC,           // halo : actif, taille de la carte, couleur (3)
   P_COUNT = 128
 };
 #define OFF_PARAMS 0                       // 128 doubles = 1024
@@ -35,7 +37,8 @@ enum {
 #define OFF_HUF    (OFF_QC + 256)          // 4 tables × (256 codes + 256 longueurs) int32 = 8192
 #define OFF_STATE  (OFF_HUF + 8192)        // état de l'encodeur (int32[16])
 #define OFF_BLK    (OFF_STATE + 64)        // float[3*64] blocs Y, Cb, Cr + int32[64] coefficients
-#define OFF_STRIP  (OFF_BLK + 1024)        // u8[W*8*3]  (puis tampon de sortie)
+#define OFF_GLOW   (OFF_BLK + 1024)        // float[128*128] carte du halo
+#define OFF_STRIP  (OFF_GLOW + 65536)      // u8[W*8*3]  (puis tampon de sortie)
 
 typedef struct {
   int32_t w, h;
@@ -100,7 +103,7 @@ static inline double qsin(double x) { double x2 = x * x; return x * (1 - x2 / 6 
 // Paramètres recopiés en variables locales une fois par bande (évite que chaque
 // écriture d'octet force le compilateur à relire les paramètres en mémoire).
 typedef struct {
-  double mr, mg, mb, K, sat, vib, la, m0, m1, m2, kS, kH;
+  double mr, mg, mb, K, sat, vib, la, m0, m1, m2, kS, kH, hc0, hc1, hc2;
   int mono, hasHue, split;
   const double *LS, *LL, *SH, *SS, *SHh;
 } Px;
@@ -109,15 +112,18 @@ static inline Px load_px(const double *P) {
   Px x;
   x.mr = P[P_MR]; x.mg = P[P_MG]; x.mb = P[P_MB]; x.K = P[P_K]; x.sat = P[P_SAT]; x.vib = P[P_VIB];
   x.la = P[P_LA]; x.m0 = P[P_MONO_R]; x.m1 = P[P_MONO_G]; x.m2 = P[P_MONO_B]; x.kS = P[P_KS]; x.kH = P[P_KH];
+  x.hc0 = P[P_HC]; x.hc1 = P[P_HC + 1]; x.hc2 = P[P_HC + 2];
   x.mono = P[P_MONO] != 0; x.hasHue = P[P_HASHUE] != 0; x.split = P[P_SPLIT] != 0;
   x.LS = P + P_LSAT; x.LL = P + P_LLUM; x.SH = P + P_LSHIFT; x.SS = P + P_SS; x.SHh = P + P_SH;
   return x;
 }
 
 static inline __attribute__((always_inline)) void pixel(const Px x, const float *restrict gain, const u8 *restrict enc,
-                                                        double r, double g, double b, u8 *restrict out) {
+                                                        double r, double g, double b, u8 *restrict out, double vm, double gl) {
   const double LR = 0.2126, LG = 0.7152, LB = 0.0722;
   r *= x.mr; g *= x.mg; b *= x.mb;
+  r *= vm; g *= vm; b *= vm;
+  r += gl * x.hc0; g += gl * x.hc1; b += gl * x.hc2;
   if (x.mono) {
     double m = x.m0 * r + x.m1 * g + x.m2 * b, k1 = 1 - x.la;
     r = m + (r - m) * k1; g = m + (g - m) * k1; b = m + (b - m) * k1;
@@ -208,9 +214,10 @@ static inline F4 gather_d(const double *restrict t, v128_t idx) {
 }
 
 static inline __attribute__((always_inline)) void pixel4(const Px x, const float *restrict gain, const u8 *restrict enc,
-                                                         F4 r, F4 g, F4 b, u8 *restrict out) {
+                                                         F4 r, F4 g, F4 b, u8 *restrict out, F4 vm, F4 gl) {
   const F4 LR = F(0.2126), LG = F(0.7152), LB = F(0.0722), ONE = F(1), ZERO = F(0);
-  r = MUL(r, F(x.mr)); g = MUL(g, F(x.mg)); b = MUL(b, F(x.mb));
+  r = MUL(MUL(r, F(x.mr)), vm); g = MUL(MUL(g, F(x.mg)), vm); b = MUL(MUL(b, F(x.mb)), vm);
+  r = ADD(r, MUL(gl, F(x.hc0))); g = ADD(g, MUL(gl, F(x.hc1))); b = ADD(b, MUL(gl, F(x.hc2)));
   if (x.mono) {
     F4 m = ADD(ADD(MUL(F(x.m0), r), MUL(F(x.m1), g)), MUL(F(x.m2), b)), k1 = F(1 - x.la);
     r = ADD(m, MUL(SUB(r, m), k1)); g = ADD(m, MUL(SUB(g, m), k1)); b = ADD(m, MUL(SUB(b, m), k1));
@@ -408,6 +415,7 @@ EXPORT(slot_size) int slot_size(int outW) {
 EXPORT(params_offset) int params_offset(void) { return OFF_PARAMS; }
 EXPORT(gain_offset) int gain_offset(void) { return OFF_GAIN; }
 EXPORT(enc_offset) int enc_offset(void) { return OFF_ENC; }
+EXPORT(glow_offset) int glow_offset(void) { return OFF_GLOW; }
 
 static const double AAN[8] = {1.0, 1.387039845, 1.306562965, 1.175875602, 1.0, 0.785694958, 0.541196100, 0.275899379};
 static const u8 STD_Y_Q[64] = {
@@ -446,6 +454,28 @@ EXPORT(out_offset) int out_offset(u8 *slot) {
   return OFF_STRIP + st->w * 8 * 3;
 }
 
+// Vignettage : poids 0 au centre, 1 aux coins (identique à vignetteWeight de pipeline.js)
+static inline F4 vig4(F4 nx, F4 ny, float amt) {
+  F4 d = wasm_f32x4_sqrt(MUL(ADD(MUL(nx, nx), MUL(ny, ny)), F(0.5)));
+  F4 t = MIN(MAX(MUL(SUB(d, F(0.3)), F(1.0 / 0.75)), F(0)), F(1));
+  F4 w = MUL(MUL(t, t), SUB(F(3), MUL(F(2), t)));
+  return MAX(ADD(F(1), MUL(F(0.85f * amt), w)), F(0));
+}
+static inline double vig1(double nx, double ny, double amt) {
+  double d = __builtin_sqrt((nx * nx + ny * ny) * 0.5), t = (d - 0.3) / 0.75;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  double m = 1 + 0.85 * amt * t * t * (3 - 2 * t);
+  return m < 0 ? 0 : m;
+}
+// Halo : carte basse résolution échantillonnée (bilinéaire) en coordonnées source normalisées
+static inline float glow_at(const float *restrict gm, int gw, int gh, float u, float v) {
+  float x = u * gw - 0.5f, y = v * gh - 0.5f;
+  x = x < 0 ? 0 : x > gw - 1 ? gw - 1 : x; y = y < 0 ? 0 : y > gh - 1 ? gh - 1 : y;
+  int xi = (int)x, yi = (int)y; float fx = x - xi, fy = y - yi;
+  int x1 = xi + 1 < gw ? xi + 1 : xi, y1 = yi + 1 < gh ? yi + 1 : yi;
+  return (gm[yi * gw + xi] * (1 - fx) + gm[yi * gw + x1] * fx) * (1 - fy) + (gm[y1 * gw + xi] * (1 - fx) + gm[y1 * gw + x1] * fx) * fy;
+}
+
 // Rend et encode une bande de 8 lignes de sortie (y0 = première ligne).
 // restart ≥ 0 : ajoute ensuite le marqueur RST(restart & 7).
 // Renvoie le nombre d'octets écrits dans le tampon de sortie.
@@ -462,6 +492,10 @@ EXPORT(enc_strip) int enc_strip(u8 *slot, const uint16_t *img, int SW, int SH, i
   const double SX0 = P[P_SX0], SY0 = P[P_SY0], DUX = P[P_DUX], DUY = P[P_DUY], DVX = P[P_DVX], DVY = P[P_DVY];
   // P[100] / P[101] : sauter le rendu / l'encodage (profilage uniquement)
   const int ident = P[P_IDENT] != 0, skipPix = P[100] != 0, skipEnc = P[101] != 0;
+  const float vamt = (float)P[P_VIG];
+  const int vigOn = vamt != 0, glowOn = P[P_GLOW] != 0, gw = (int)P[P_GW], gh = (int)P[P_GH];
+  const float ivw = 2.0f / (float)P[P_OUTW], ivh = 2.0f / (float)P[P_OUTH], isw = 1.0f / SW, ish = 1.0f / SH;
+  const float *gm = (const float *)(slot + OFF_GLOW);
   st->outPos = 0;
 
   // 1) rendu des pixels de la bande
@@ -471,6 +505,9 @@ EXPORT(enc_strip) int enc_strip(u8 *slot, const uint16_t *img, int SW, int SH, i
     double dx = DUX, dy = DUY;
     u8 *restrict o = strip + r * W * 3;
     const F4 SC = F(1.0 / 65535);
+    const float nyv = (v + 0.5f) * ivh - 1;
+#define VIG4(uu) (vigOn ? vig4(SUB(MUL(ADD(wasm_f32x4_make(uu, uu + 1, uu + 2, uu + 3), F(0.5)), F(ivw)), F(1)), F(nyv), vamt) : F(1))
+#define VIG1(uu) (vigOn ? vig1(((uu) + 0.5) * ivw - 1, nyv, vamt) : 1.0)
     if (ident) {
       // sans rotation fine : correspondance pixel à pixel, pas entier constant
       int xi0 = (int)__builtin_floor(sx), yi0 = (int)__builtin_floor(sy); // = round(sx - 0.5)
@@ -479,10 +516,13 @@ EXPORT(enc_strip) int enc_strip(u8 *slot, const uint16_t *img, int SW, int SH, i
 #define NN(uu) ({ int xi = xi0 + sxs * (uu), yi = yi0 + sys * (uu); \
         xi = xi < 0 ? 0 : xi >= SW ? SW - 1 : xi; yi = yi < 0 ? 0 : yi >= SH ? SH - 1 : yi; \
         img + ((long)yi * SW + xi) * 3; })
+#define GLN(uu) glow_at(gm, gw, gh, (xi0 + sxs * (uu) + 0.5f) * isw, (yi0 + sys * (uu) + 0.5f) * ish)
       for (; u + 4 <= W; u += 4, o += 12) {
         const uint16_t *p0 = NN(u), *p1 = NN(u + 1), *p2 = NN(u + 2), *p3 = NN(u + 3);
+        F4 gl = glowOn ? wasm_f32x4_make(GLN(u), GLN(u + 1), GLN(u + 2), GLN(u + 3)) : F(0);
         pixel4(px, gain, enc, MUL(wasm_f32x4_make(p0[0], p1[0], p2[0], p3[0]), SC),
-               MUL(wasm_f32x4_make(p0[1], p1[1], p2[1], p3[1]), SC), MUL(wasm_f32x4_make(p0[2], p1[2], p2[2], p3[2]), SC), o);
+               MUL(wasm_f32x4_make(p0[1], p1[1], p2[1], p3[1]), SC), MUL(wasm_f32x4_make(p0[2], p1[2], p2[2], p3[2]), SC), o,
+               VIG4(u), gl);
       }
 #undef NN
       for (; u < W; u++, o += 3) {
@@ -490,15 +530,17 @@ EXPORT(enc_strip) int enc_strip(u8 *slot, const uint16_t *img, int SW, int SH, i
         xi = xi < 0 ? 0 : xi >= SW ? SW - 1 : xi;
         yi = yi < 0 ? 0 : yi >= SH ? SH - 1 : yi;
         const uint16_t *s = img + ((long)yi * SW + xi) * 3;
-        pixel(px, gain, enc, s[0] * sc, s[1] * sc, s[2] * sc, o);
+        pixel(px, gain, enc, s[0] * sc, s[1] * sc, s[2] * sc, o, VIG1(u), glowOn ? GLN(u) : 0);
       }
+#undef GLN
     } else {
       // redressement : interpolation bilinéaire, 4 pixels à la fois
       // (variables séparées par voie : aucun tableau local, donc aucune pile en mémoire)
-#define BIL(uu, R, G, B) { \
+#define BIL(uu, R, G, B, GL) { \
         double X = sx + dx * (uu) - 0.5, Yc = sy + dy * (uu) - 0.5; \
         if (X < 0) X = 0; else if (X > SW - 1) X = SW - 1; \
         if (Yc < 0) Yc = 0; else if (Yc > SH - 1) Yc = SH - 1; \
+        GL = glowOn ? glow_at(gm, gw, gh, (float)(X + 0.5) * isw, (float)(Yc + 0.5) * ish) : 0; \
         int xi = (int)X, yi = (int)Yc; float fx = (float)(X - xi), fy = (float)(Yc - yi); \
         int x1 = xi + 1 < SW ? xi + 1 : xi, y1 = yi + 1 < SH ? yi + 1 : yi; \
         const uint16_t *pa = img + ((long)yi * SW + xi) * 3, *pb = img + ((long)yi * SW + x1) * 3; \
@@ -509,20 +551,23 @@ EXPORT(enc_strip) int enc_strip(u8 *slot, const uint16_t *img, int SW, int SH, i
         B = pa[2] * w00 + pb[2] * w10 + pc[2] * w01 + pd[2] * w11; }
       int u = 0;
       for (; u + 4 <= W; u += 4, o += 12) {
-        float r0, g0, b0, r1, g1, b1, r2, g2, b2, r3, g3, b3;
-        BIL(u, r0, g0, b0) BIL(u + 1, r1, g1, b1) BIL(u + 2, r2, g2, b2) BIL(u + 3, r3, g3, b3)
+        float r0, g0, b0, r1, g1, b1, r2, g2, b2, r3, g3, b3, l0, l1, l2, l3;
+        BIL(u, r0, g0, b0, l0) BIL(u + 1, r1, g1, b1, l1) BIL(u + 2, r2, g2, b2, l2) BIL(u + 3, r3, g3, b3, l3)
         pixel4(px, gain, enc, MUL(wasm_f32x4_make(r0, r1, r2, r3), SC),
-               MUL(wasm_f32x4_make(g0, g1, g2, g3), SC), MUL(wasm_f32x4_make(b0, b1, b2, b3), SC), o);
+               MUL(wasm_f32x4_make(g0, g1, g2, g3), SC), MUL(wasm_f32x4_make(b0, b1, b2, b3), SC), o,
+               VIG4(u), wasm_f32x4_make(l0, l1, l2, l3));
       }
       for (; u < W; u++, o += 3) {
-        float r0, g0, b0;
-        BIL(u, r0, g0, b0)
-        pixel(px, gain, enc, r0 * sc, g0 * sc, b0 * sc, o);
+        float r0, g0, b0, l0;
+        BIL(u, r0, g0, b0, l0)
+        pixel(px, gain, enc, r0 * sc, g0 * sc, b0 * sc, o, VIG1(u), l0);
       }
 #undef BIL
     }
   }
 
+#undef VIG4
+#undef VIG1
   // 2) encodage JPEG des blocs 8×8
   if (skipEnc) return 0;
   float *BY = (float *)(slot + OFF_BLK), *BU = BY + 64, *BV = BY + 128;

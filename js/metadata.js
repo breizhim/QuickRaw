@@ -1,6 +1,6 @@
 // Lecture et présentation de toutes les métadonnées (exifr + LibRaw).
 import exifr from '../vendor/exifr/exifr.mjs';
-import { describeLevel } from './level.js';
+import { describeLevel, readCameraMode } from './level.js';
 
 // Noms des balises DNG / TIFF-EP qu'exifr ne connaît pas
 const DNG_TAGS = {
@@ -131,6 +131,9 @@ export function buildSections(file, exif, raw, extra = {}) {
     push('Motif du capteur', raw.cdesc);
     push('Orientation (flip)', raw.flip);
     if (extra.level) push('Niveau électronique', describeLevel(extra.level));
+    const mode = readCameraMode(exif);
+    if (mode) push('Mode du boîtier (Image Control)', mode.name);
+    if (extra.cameraJpeg) push('Aperçu JPEG intégré (rendu boîtier)', `${extra.cameraJpeg.width} × ${extra.cameraJpeg.height}`);
     push('Logiciel', raw.software);
     push('Auteur', raw.artist);
     push('Description', raw.desc);

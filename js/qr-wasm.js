@@ -6,7 +6,7 @@
 //   [img, img + W×H×6)   image RVB 16 bits
 export const NSLOT = 8;
 const BASE = 1 << 20;
-const OFF_STRIP = 1024 + 16384 + 65536 + 256 + 256 + 8192 + 64 + 1024; // = native/qr.c
+const OFF_STRIP = 1024 + 16384 + 65536 + 256 + 256 + 8192 + 64 + 1024 + 65536; // = native/qr.c
 export const slotSize = (w) => ((OFF_STRIP + w * 72 + 4096) + 65535) & ~65535;
 
 export function layoutFor(SW, SH, mosaicPixels = 0) {
@@ -54,7 +54,7 @@ export function getModule() {
 }
 
 // Côté worker : instancie le module sur la mémoire partagée et prépare le slot
-export function setupSlot(module, memory, slot, spec, encLut, map, identity, quality) {
+export function setupSlot(module, memory, slot, spec, encLut, map, identity, quality, glow = null) {
   const { exports: X } = new WebAssembly.Instance(module, { env: { memory } });
   const P = new Float64Array(memory.buffer, slot, 128);
   P.fill(0);
@@ -70,6 +70,11 @@ export function setupSlot(module, memory, slot, spec, encLut, map, identity, qua
   const r0 = map.row(0), r1 = map.row(1);
   P[57] = identity ? 1 : 0; P[58] = r0.sx; P[59] = r0.sy; P[60] = r0.dx; P[61] = r0.dy;
   P[62] = r1.sx - r0.sx; P[63] = r1.sy - r0.sy;
+  P[64] = spec.vigAmt || 0; P[65] = map.outW; P[66] = map.outH;
+  if (glow && spec.hal) {
+    P[67] = 1; P[68] = glow.mw; P[69] = glow.mh; P[70] = spec.hal.color[0]; P[71] = spec.hal.color[1]; P[72] = spec.hal.color[2];
+    new Float32Array(memory.buffer, slot + X.glow_offset(), glow.mw * glow.mh).set(glow.map);
+  }
   new Float32Array(memory.buffer, slot + X.gain_offset(), 4096).set(spec.gain);
   new Uint8Array(memory.buffer, slot + X.enc_offset(), 65536).set(encLut);
   X.enc_init(slot, map.outW, map.outH, quality);

@@ -5,7 +5,7 @@ import { exportMapping } from './pipeline.js';
 import { JpegEncoder, buildExif } from './jpeg-encoder.js';
 import { getModule, NSLOT } from './qr-wasm.js';
 
-export async function exportJpeg({ full, params, base, geom, quality = 100, exif = {}, onProgress }) {
+export async function exportJpeg({ full, params, base, geom, quality = 100, exif = {}, onProgress, glow = null }) {
   const { data, w: SW, h: SH } = full;
   const { outW, outH } = exportMapping(SW, SH, geom);
   const totalStrips = Math.ceil(outH / 8);
@@ -33,7 +33,7 @@ export async function exportJpeg({ full, params, base, geom, quality = 100, exif
         m.error ? reject(new Error(m.error)) : resolve(m.chunks);
       };
       wk.onerror = (e) => { wk.terminate(); reject(new Error(e.message || 'Erreur du worker d\'export')); };
-      wk.postMessage({ data, SW, SH, params, base, geom, quality, s0, s1, totalStrips,
+      wk.postMessage({ data, SW, SH, params, base, geom, quality, s0, s1, totalStrips, glow,
         wasm: wasm && { ...wasm, slot: wasm.layout.slots + i * wasm.layout.slotSize } });
     }));
   }

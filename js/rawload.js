@@ -12,7 +12,7 @@ export async function loadRaw(buf) {
   const t0 = performance.now();
   let spare = buf.slice(0); // copie pour un éventuel repli (LibRaw détache le tampon)
   const t1 = performance.now();
-  const { half, meta, raw } = await openRaw(buf);
+  const { half, meta, raw, thumb } = await openRaw(buf);
   const t2 = performance.now();
   const rgbCam = rgbCam3(meta);
   const t3 = performance.now();
@@ -35,5 +35,5 @@ export async function loadRaw(buf) {
   })();
   // aperçu : linéarisé et réduit par le worker moteur (hors du fil principal)
   const previewFor = (previewMax) => engine.call({ type: 'previewRaw', half: { data: half.data, width: half.width, height: half.height }, rgbCam, previewMax });
-  return { previewFor, half: { width: half.width, height: half.height }, meta, cal, fullP };
+  return { previewFor, half: { width: half.width, height: half.height }, meta, cal, fullP, thumb };
 }

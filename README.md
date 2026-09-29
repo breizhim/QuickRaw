@@ -19,15 +19,33 @@ envoyé sur un serveur, tout est traité sur l'appareil (ordinateur ou mobile).
 - **Filtres** (bandeau de vignettes, intensité réglable) :
   - *Couleur* : Provia (standard fidèle), Astia (douce, peaux flatteuses),
     Vivid (esprit Adobe Vivid), Velvia (diapositive saturée et contrastée) ;
+  - *Film* : Classic Chrome (reportage sourd), Classic Negative (ombres
+    sarcelle, contraste dur), Nostalgic Neg. (ambre, ombres douces), Portra 400
+    (tons chair chauds, contraste bas), Kodachrome 64 (rouges profonds, ciels
+    denses), CineStill 800T (tungstène froid avec **halo rouge** autour des
+    hautes lumières) ;
+  - *Ricoh GR* : Positive Film, Negative Film, Hard Monotone (équivalents des
+    modes Image Control du boîtier) ;
   - *Noir & blanc* : Acros (modelé fin), Tri-X (reportage contrasté, filtre
-    jaune), N&B rouge (ciels sombres, nuages éclatants), Sépia (virage brun) ;
-  - *Créatif* : Cyberpunk jour (sarcelle / orange, verts virés au cyan) et
-    Cyberpunk nuit (néons magenta / cyan, ombres bleu-violet).
+    jaune), N&B rouge (ciels sombres, nuages éclatants), Sépia (virage brun),
+    N&B contrasté (esprit Provoke / Moriyama, avec vignettage) ;
+  - *Créatif* : Bleach bypass, Cyberpunk jour (sarcelle / orange, verts virés
+    au cyan) et Cyberpunk nuit (néons magenta / cyan, ombres bleu-violet).
   Les filtres combinent décalages de tons, saturation / luminance / décalage par
-  teinte, mélangeur N&B et virage partiel. Les suggestions sont recalculées selon
-  le filtre pour ne pas cumuler ses effets.
+  teinte, mélangeur N&B, virage partiel, vignettage et halo. Les suggestions
+  sont recalculées selon le filtre pour ne pas cumuler ses effets. Pas de grain
+  artificiel.
+- **Mode du boîtier (Ricoh GR)** : le mode Image Control choisi à la prise de
+  vue (Monotone, Noir dur, Positive Film, Bleach bypass, Rétro…) est lu dans
+  les maker notes du DNG (tag 0x004F) ; le filtre équivalent est sélectionné à
+  l'ouverture et proposé en suggestion. En lot, option « Selon le mode du
+  boîtier ».
+- **Rendu boîtier** : bouton qui affiche (et exporte) le JPEG pleine
+  résolution intégré au RAW, c'est-à-dire exactement le rendu de l'appareil,
+  avec recadrage / rotation / réglages par-dessus. Fichier exporté suffixé
+  `-boitier`.
 - **Réglages** : température, teinte, exposition, contraste, hautes lumières,
-  ombres, blancs, noirs, vibrance, saturation. Double-clic / double-tape sur un
+  ombres, blancs, noirs, vibrance, saturation, vignettage. Double-clic / double-tape sur un
   intitulé pour le remettre à zéro. Bouton *Avant / Après* (maintenir, ou touche
   `\`) et affichage de l'écrêtage.
 - **Recadrage et rotation** : cadre en paysage ou en portrait, formats libre /

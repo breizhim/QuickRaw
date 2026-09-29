@@ -17,6 +17,7 @@ export const DEFAULT_PARAMS = Object.freeze({
   blacks: 0,      // -100..100
   vibrance: 0,    // -100..100
   saturation: 0,  // -100..100
+  vignette: 0,    // -100..100 (négatif : assombrit les bords)
   look: 'none',   // filtre : clé de LOOKS
   lookAmount: 100, // intensité du filtre, 0..100 %
 });
@@ -65,6 +66,85 @@ export const LOOKS = {
     hueSat: [1.06, 0.95, 1.14, 1.2, 1.2, 1.14, 1.1, 1.12, 1.14, 1.05, 1.02, 1.04],
     hueLum: [0.97, 1.0, 1.04, 1.0, 0.95, 0.94, 0.92, 0.88, 0.86, 0.92, 0.97, 0.97],
   },
+  // ---- Films / street ----
+  // Fujifilm Classic Chrome : couleurs sourdes, ombres denses, bleus tirant sur le cyan
+  classicchrome: {
+    name: 'Classic Chrome', group: 'Film',
+    tone: { contrast: 14, shadows: -10, highlights: -12, blacks: -4 },
+    sat: 0.8,
+    hueSat: [0.85, 0.95, 0.8, 0.78, 0.75, 0.8, 0.85, 0.9, 0.9, 0.85, 0.85, 0.85],
+    hueLum: [1, 1, 1, 0.97, 0.95, 0.95, 0.95, 0.92, 0.9, 1, 1, 1],
+    hueShift: [0, 0, -4, -8, -10, -6, 0, -6, -10, 0, 0, 0],
+    split: { shadows: [0.88, 1.0, 1.08], highlights: [1.06, 1.0, 0.9], sS: 0.18, sH: 0.12 },
+  },
+  // Fujifilm Classic Negative (Superia) : contraste, ombres cyan, hautes lumières chaudes
+  classicneg: {
+    name: 'Classic Negative', group: 'Film',
+    tone: { contrast: 26, blacks: -8, highlights: -12 },
+    sat: 0.95,
+    hueSat: [1.0, 0.95, 0.9, 0.85, 0.85, 0.95, 1.1, 1.05, 0.95, 0.9, 0.95, 1.0],
+    hueShift: [-8, -6, -10, 12, 18, 10, 0, -8, -12, 0, 0, -4],
+    split: { shadows: [0.75, 1.0, 1.05], highlights: [1.08, 0.98, 0.88], sS: 0.35, sH: 0.2 },
+  },
+  // Fujifilm Nostalgic Neg. : ambre, hautes lumières douces (esprit « New Color » 70's)
+  nostalgic: {
+    name: 'Nostalgic Neg.', group: 'Film',
+    tone: { contrast: 6, highlights: -20, shadows: 6, blacks: 5 },
+    sat: 0.95,
+    hueSat: [1.0, 1.08, 1.05, 0.95, 0.9, 0.9, 0.9, 0.88, 0.85, 0.95, 1.0, 1.0],
+    hueShift: [0, -4, -6, -10, -10, -4, 0, -4, -8, 0, 0, 0],
+    split: { shadows: [1.02, 1.0, 0.95], highlights: [1.12, 0.98, 0.78], sS: 0.1, sH: 0.35 },
+  },
+  // Kodak Portra 400 : doux, peaux flatteuses, tons chauds et pastel
+  portra: {
+    name: 'Portra 400', group: 'Film',
+    tone: { contrast: -8, highlights: -18, shadows: 12, blacks: 6, whites: -5 },
+    sat: 0.9,
+    hueSat: [0.95, 0.95, 1.05, 0.9, 0.85, 0.85, 0.9, 0.9, 0.9, 0.95, 0.95, 0.95],
+    hueLum: [1, 1.04, 1.02, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    hueShift: [4, 2, 0, 6, 8, 4, 0, 0, 0, 0, 0, 0],
+    split: { shadows: [0.95, 1.0, 1.02], highlights: [1.06, 1.0, 0.9], sS: 0.1, sH: 0.25 },
+  },
+  // Kodachrome 64 : couleurs vives mais denses, rouges profonds, bleus sombres
+  kodachrome: {
+    name: 'Kodachrome 64', group: 'Film',
+    tone: { contrast: 28, blacks: -12, highlights: -6 },
+    sat: 1.18,
+    hueSat: [1.2, 1.08, 1.12, 1.0, 0.95, 0.95, 1.0, 1.05, 1.1, 1.0, 1.0, 1.1],
+    hueLum: [0.92, 0.97, 1.0, 1, 0.97, 0.95, 0.95, 0.9, 0.88, 0.95, 1, 0.95],
+    hueShift: [0, 0, -5, 4, 6, 0, 0, -4, -6, 0, 0, 0],
+    split: { shadows: [1, 1, 1], highlights: [1.04, 1.0, 0.94], sS: 0, sH: 0.15 },
+  },
+  // CineStill 800T : film de cinéma tungstène, ombres bleutées, halo rouge autour des lumières
+  cinestill: {
+    name: 'CineStill 800T', group: 'Film',
+    tone: { contrast: 18, blacks: -10, highlights: -8, temp: -12 },
+    sat: 1.1,
+    hueShift: [0, -6, -8, 0, 8, 6, 0, 0, 0, 0, 0, 0],
+    split: { shadows: [0.75, 0.95, 1.15], highlights: [1.02, 1.0, 0.97], sS: 0.4, sH: 0.1 },
+    halation: { k: 0.4, thr: 0.8, radius: 0.012, color: [1.0, 0.28, 0.1] },
+  },
+  // ---- Ricoh GR (modes « Image Control » du boîtier) ----
+  grpositive: {
+    name: 'Positive Film (GR)', group: 'Ricoh GR',
+    tone: { contrast: 20, blacks: -6 },
+    sat: 1.15,
+    hueSat: [1.1, 1.05, 1.1, 1.0, 0.95, 0.95, 1.0, 1.05, 1.05, 1.0, 1.0, 1.05],
+    hueShift: [0, 0, -4, -6, -8, 0, 0, 2, 4, 0, 0, 0],
+    split: { shadows: [1.0, 0.98, 0.96], highlights: [1.06, 1.0, 0.9], sS: 0.1, sH: 0.2 },
+  },
+  grnegative: {
+    name: 'Negative Film (GR)', group: 'Ricoh GR',
+    tone: { contrast: -10, highlights: -15, shadows: 10, blacks: 6 },
+    sat: 0.78,
+    hueShift: [5, 3, 0, 8, 12, 6, 0, 0, 0, 0, 0, 0],
+    split: { shadows: [0.92, 1.0, 1.03], highlights: [1.04, 1.0, 0.94], sS: 0.2, sH: 0.15 },
+  },
+  grhard: {
+    name: 'Hard Monotone (GR)', group: 'Ricoh GR',
+    mono: [0.3, 0.59, 0.11],
+    tone: { contrast: 75, blacks: -30, whites: 30, highlights: 10, shadows: -15, vignette: -20 },
+  },
   // Fujifilm Acros : N&B à grain fin, modelé riche, noirs profonds
   acros: {
     name: 'Acros', group: 'Noir & blanc',
@@ -89,6 +169,18 @@ export const LOOKS = {
     mono: [0.30, 0.59, 0.11],
     tone: { contrast: 8, blacks: 8, highlights: -10 },
     split: { shadows: [1.0, 0.7, 0.42], highlights: [1.0, 0.85, 0.62], sS: 1.5, sH: 1.3 },
+  },
+  // N&B très contrasté, esthétique « Provoke » (Moriyama) : blancs brûlés, noirs bouchés
+  provoke: {
+    name: 'N&B contrasté', group: 'Noir & blanc',
+    mono: [0.35, 0.55, 0.1],
+    tone: { contrast: 65, blacks: -25, whites: 25, vignette: -25 },
+  },
+  // Bleach bypass : couleurs très désaturées, contraste fort, aspect métallique
+  bleach: {
+    name: 'Bleach bypass', group: 'Créatif',
+    tone: { contrast: 40, blacks: -12, highlights: -10 },
+    sat: 0.45,
   },
   // Cyberpunk jour : sarcelle et orange, verts virés au cyan, pointe de rose
   cyberday: {
@@ -195,6 +287,10 @@ export function makeProcessor(params, base = {}) {
     split = { s: norm(look.split.shadows), h: norm(look.split.highlights), kS: look.split.sS * la, kH: look.split.sH * la };
   }
   const INV_SQRT3 = 1 / Math.sqrt(3);
+  // Vignettage (curseur + filtre) et halo (CineStill) : effets dépendant de la position
+  const vigAmt = Math.max(-100, Math.min(100, p.vignette || 0)) / 100;
+  const hal = look && look.halation && la > 0 ? { ...look.halation, k: look.halation.k * la } : null;
+  const hc0 = hal ? hal.color[0] : 0, hc1 = hal ? hal.color[1] : 0, hc2 = hal ? hal.color[2] : 0;
   const [wr, wg, wb] = wbMultipliers(p.temp, p.tint);
   const expMul = Math.pow(2, p.exposure + (base.exposure || 0));
   const mr = wr * expMul, mg = wg * expMul, mb = wb * expMul;
@@ -230,8 +326,11 @@ export function makeProcessor(params, base = {}) {
   const K = (LUT_N - 1) / Math.sqrt(LUT_MAX);
 
   // Traite un pixel linéaire ; écrit 3 octets dans out[o..o+2].
-  function pixel(r, g, b, out, o) {
+  // vm : multiplicateur de vignettage du pixel (1 = aucun) ; gl : halo déjà pondéré
+  function pixel(r, g, b, out, o, vm, gl) {
     r *= mr; g *= mg; b *= mb;
+    if (vm !== undefined && vm !== 1) { r *= vm; g *= vm; b *= vm; }
+    if (gl) { r += gl * hc0; g += gl * hc1; b += gl * hc2; }
     if (mono) { // N&B : mélange des canaux, dosé par l'intensité
       const m = mono[0] * r + mono[1] * g + mono[2] * b, k1 = 1 - la;
       r = m + (r - m) * k1; g = m + (g - m) * k1; b = m + (b - m) * k1;
@@ -306,7 +405,7 @@ export function makeProcessor(params, base = {}) {
   }
 
   // Paramètres précalculés, réutilisés tels quels par l'export WebAssembly (native/qr.c)
-  const spec = { mr, mg, mb, mono, la, gain, K, sat, vib, hasHue, lookSat, lookLum, lookShift, split };
+  const spec = { mr, mg, mb, mono, la, gain, K, sat, vib, hasHue, lookSat, lookLum, lookShift, split, vigAmt, hal, expMul };
   return { pixel, params: p, spec };
 }
 
@@ -317,12 +416,90 @@ export const ENC_LUT = (() => {
 })();
 
 // Traite un tampon linéaire RVB (Float32 0..1) vers RGBA 8 bits.
-export function processRGBA(proc, src, dst, n) {
-  const px = proc.pixel;
+// sp (facultatif) : { pw, vig, glow } — position des pixels pour le vignettage et le halo
+export function processRGBA(proc, src, dst, n, sp = null) {
+  const px = proc.pixel, amt = proc.spec.vigAmt;
+  const vig = sp && sp.vig && amt ? sp.vig : null, glow = sp && sp.glow && proc.spec.hal ? sp.glow : null;
+  if (!vig && !glow) {
+    for (let i = 0, s = 0, d = 0; i < n; i++, s += 3, d += 4) {
+      px(src[s], src[s + 1], src[s + 2], dst, d);
+      dst[d + 3] = 255;
+    }
+    return;
+  }
+  const pw = sp.pw, ph = n / pw;
   for (let i = 0, s = 0, d = 0; i < n; i++, s += 3, d += 4) {
-    px(src[s], src[s + 1], src[s + 2], dst, d);
+    const x = i % pw, y = (i / pw) | 0;
+    let vm = 1, gl = 0;
+    if (vig) { const nx = vig.ax * x + vig.bx * y + vig.cx, ny = vig.ay * x + vig.by * y + vig.cy; vm = vigMul(amt, vignetteWeight(nx, ny)); }
+    if (glow) gl = sampleGlow(glow, (x + 0.5) / pw, (y + 0.5) / ph);
+    px(src[s], src[s + 1], src[s + 2], dst, d, vm, gl);
     dst[d + 3] = 255;
   }
+}
+
+// ---------- Vignettage ----------
+// nx, ny : position dans le cadre final (recadré), de -1 à 1. Poids 0 au centre, 1 aux coins.
+export function vignetteWeight(nx, ny) {
+  const d = Math.sqrt((nx * nx + ny * ny) * 0.5);
+  let t = (d - 0.3) / 0.75; t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return t * t * (3 - 2 * t);
+}
+export const vigMul = (amt, w) => { const m = 1 + 0.85 * amt * w; return m < 0 ? 0 : m; };
+
+// Coefficients affines : pixel de l'aperçu (x, y) → position (nx, ny) dans le cadre final
+export function vignetteMap(SW, SH, geom, pw, ph) {
+  const map = exportMapping(SW, SH, geom), { outW, outH } = map;
+  const r0 = map.row(0), r1 = map.row(1);
+  // source = S0 + u·du + v·dv  →  (u, v) = M⁻¹ (source − S0)
+  const a = r0.dx, b = r1.sx - r0.sx, c = r0.dy, d = r1.sy - r0.sy, det = a * d - b * c;
+  if (!det) return null;
+  const ia = d / det, ib = -b / det, ic = -c / det, id = a / det;
+  const kx = SW / pw, ky = SH / ph;
+  // u = ia·(X − sx0) + ib·(Y − sy0), avec X = (x + 0.5)·kx, Y = (y + 0.5)·ky ; nx = (u + 0.5)·2/outW − 1
+  const ux = ia * kx, uy = ib * ky, u0 = ia * (0.5 * kx - r0.sx) + ib * (0.5 * ky - r0.sy);
+  const vx = ic * kx, vy = id * ky, v0 = ic * (0.5 * kx - r0.sx) + id * (0.5 * ky - r0.sy);
+  const sx = 2 / outW, sy = 2 / outH;
+  return { ax: ux * sx, bx: uy * sx, cx: (u0 + 0.5) * sx - 1, ay: vx * sy, by: vy * sy, cy: (v0 + 0.5) * sy - 1 };
+}
+
+// ---------- Halo (halation) ----------
+// Carte basse résolution des hautes lumières floutées (effet diffus : une
+// centaine de pixels de large suffit), échantillonnée en coordonnées source.
+export const GLOW_MAX = 128;
+export function buildGlowMap(src, w, h, proc) {
+  const hal = proc.spec.hal;
+  if (!hal) return null;
+  const mw = Math.min(GLOW_MAX, w), f = w / mw, mh = Math.max(1, Math.min(GLOW_MAX, Math.round(h / f)));
+  const fy = h / mh, map = new Float32Array(mw * mh), e = proc.spec.expMul;
+  for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+    let acc = 0, cnt = 0;
+    const y0 = Math.floor(y * fy), y1 = Math.max(y0 + 1, Math.floor((y + 1) * fy)), x0 = Math.floor(x * f), x1 = Math.max(x0 + 1, Math.floor((x + 1) * f));
+    for (let yy = y0; yy < y1; yy += 2) for (let xx = x0; xx < x1; xx += 2) {
+      const o = (yy * w + xx) * 3, Y = (LR * src[o] + LG * src[o + 1] + LB * src[o + 2]) * e;
+      acc += Y > hal.thr ? Y - hal.thr : 0; cnt++;
+    }
+    map[y * mw + x] = cnt ? acc / cnt : 0;
+  }
+  // flou (3 passes de boîte ≈ gaussienne), rayon relatif à la largeur de l'image
+  const r = Math.max(1, Math.round(hal.radius * mw * 1.5));
+  let a = map, t = new Float32Array(a.length);
+  for (let pass = 0; pass < 3; pass++) {
+    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+      let s2 = 0, c2 = 0; for (let k = -r; k <= r; k++) { const xx = x + k; if (xx >= 0 && xx < mw) { s2 += a[y * mw + xx]; c2++; } } t[y * mw + x] = s2 / c2;
+    }
+    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+      let s2 = 0, c2 = 0; for (let k = -r; k <= r; k++) { const yy = y + k; if (yy >= 0 && yy < mh) { s2 += t[yy * mw + x]; c2++; } } a[y * mw + x] = s2 / c2;
+    }
+  }
+  for (let i = 0; i < a.length; i++) a[i] *= hal.k;
+  return { map: a, mw, mh };
+}
+export function sampleGlow(g, u, v) {
+  let x = u * g.mw - 0.5, y = v * g.mh - 0.5;
+  x = x < 0 ? 0 : x > g.mw - 1 ? g.mw - 1 : x; y = y < 0 ? 0 : y > g.mh - 1 ? g.mh - 1 : y;
+  const xi = x | 0, yi = y | 0, fx = x - xi, fy = y - yi, x1 = xi + 1 < g.mw ? xi + 1 : xi, y1 = yi + 1 < g.mh ? yi + 1 : yi, m = g.map;
+  return (m[yi * g.mw + xi] * (1 - fx) + m[yi * g.mw + x1] * fx) * (1 - fy) + (m[y1 * g.mw + xi] * (1 - fx) + m[y1 * g.mw + x1] * fx) * fy;
 }
 
 // ---------- Géométrie ----------

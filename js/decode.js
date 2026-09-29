@@ -47,7 +47,13 @@ export async function openRaw(buf) {
       raw = await lr.rawImageData();
       if (raw) { raw.width = pre.width; raw.height = pre.height; }
     } catch { /* format sans données brutes exploitables */ }
-    return { half, meta, raw };
+    // plus grand aperçu JPEG intégré (rendu du boîtier, avec son mode « Image Control »)
+    let thumb = null;
+    try {
+      const t = await lr.thumbnailData();
+      if (t && t.format === 'jpeg' && t.data && t.width >= 1000) thumb = { data: t.data, width: t.width, height: t.height };
+    } catch { /* pas d'aperçu */ }
+    return { half, meta, raw, thumb };
   } finally { lr.dispose(); }
 }
 
@@ -107,16 +113,58 @@ export function toRGB16(img) {
 }
 function linLut8() { const t = new Uint16Array(256); for (let i = 0; i < 256; i++) t[i] = Math.round(srgbDecode(i / 255) * 65535); return t; }
 
-// JPEG / PNG / WebP : décodage navigateur puis linéarisation
-export async function decodeStandard(file) {
-  const bmp = await createImageBitmap(file);
+// JPEG / PNG / WebP : décodage navigateur puis linéarisation.
+// Les navigateurs mobiles limitent la surface d'un canvas (~16,7 Mpx sur iOS) :
+// au-delà, les JPEG sont décodés en JavaScript (jpeg-js).
+const CANVAS_MAX = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 16.7e6 : 2.5e8;
+
+async function viaCanvas(blob, orientation = 'from-image') {
+  let bmp;
+  try { bmp = await createImageBitmap(blob, { imageOrientation: orientation }); } catch { bmp = await createImageBitmap(blob); }
+  if (bmp.width * bmp.height > CANVAS_MAX) { bmp.close?.(); return null; }
   const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
   const ctx = c.getContext('2d'); ctx.drawImage(bmp, 0, 0);
   const px = ctx.getImageData(0, 0, c.width, c.height).data;
-  const n = c.width * c.height, out = new Uint16Array(n * 3), lut = linLut8();
-  for (let i = 0; i < n; i++) { out[i * 3] = lut[px[i * 4]]; out[i * 3 + 1] = lut[px[i * 4 + 1]]; out[i * 3 + 2] = lut[px[i * 4 + 2]]; }
   bmp.close?.();
-  return { data: out, width: c.width, height: c.height };
+  return { rgba: px, width: c.width, height: c.height };
+}
+async function viaJpegJs(bytes) {
+  const decode = (await import('../vendor/jpeg-js/decoder.mjs')).default;
+  const d = decode(bytes, { useTArray: true, formatAsRGBA: true, maxMemoryUsageInMB: 4096, maxResolutionInMP: 400 });
+  return { rgba: d.data, width: d.width, height: d.height };
+}
+function rgbaToLinear({ rgba, width, height }) {
+  const n = width * height, out = new Uint16Array(n * 3), lut = linLut8();
+  for (let i = 0; i < n; i++) { out[i * 3] = lut[rgba[i * 4]]; out[i * 3 + 1] = lut[rgba[i * 4 + 1]]; out[i * 3 + 2] = lut[rgba[i * 4 + 2]]; }
+  return { data: out, width, height };
+}
+
+export async function decodeStandard(file) {
+  let img = null;
+  try { img = await viaCanvas(file); } catch { /* repli ci-dessous */ }
+  if (!img) img = await viaJpegJs(new Uint8Array(await file.arrayBuffer()));
+  return rgbaToLinear(img);
+}
+
+// Aperçu JPEG intégré au RAW (rendu du boîtier), orienté comme la sortie de LibRaw.
+// Les aperçus intégrés sont stockés dans l'orientation du capteur : on applique `flip`.
+export async function decodeEmbeddedJpeg(bytes, flip = 0) {
+  let img = null;
+  try { img = await viaCanvas(new Blob([bytes], { type: 'image/jpeg' }), 'none'); } catch { /* repli */ }
+  if (!img) img = await viaJpegJs(bytes);
+  const lin = rgbaToLinear(img);
+  return flip ? applyFlip(lin, flip) : lin;
+}
+
+// Même convention que LibRaw (flip_index) : bit 4 = transposition, 2 = miroir vertical, 1 = horizontal
+function applyFlip({ data, width: W, height: H }, flip) {
+  const [OW, OH] = flip & 4 ? [H, W] : [W, H], out = new Uint16Array(data.length);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const r = flip & 2 ? H - 1 - y : y, c = flip & 1 ? W - 1 - x : x;
+    const o = (flip & 4 ? c * OW + r : r * OW + c) * 3, i = (y * W + x) * 3;
+    out[o] = data[i]; out[o + 1] = data[i + 1]; out[o + 2] = data[i + 2];
+  }
+  return { data: out, width: OW, height: OH };
 }
 
 function exifDate(raw, exif) {

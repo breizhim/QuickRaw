@@ -7,9 +7,9 @@ import { isStandardImage, decodeStandard, exportExifFields, baselineExposure } f
 import { loadRaw } from './rawload.js';
 import { readExif } from './metadata.js';
 import { suggestSettings, detectStraighten } from './analysis.js';
-import { DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, inscribedCrop } from './pipeline.js';
+import { DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, inscribedCrop, buildGlowMap } from './pipeline.js';
 import { exportJpeg } from './exporter.js';
-import { readLevel, levelAngle } from './level.js';
+import { readLevel, levelAngle, readCameraMode } from './level.js';
 import { ZipBuilder, crc32 } from './zip.js';
 
 const $ = (s) => document.querySelector(s);
@@ -38,6 +38,7 @@ export function initBatch({ getCurrent, toast }) {
 
   // ---------- configuration ----------
   const sel = $('#bLook');
+  { const o = document.createElement('option'); o.value = 'camera'; o.textContent = 'Selon le mode du boîtier (Ricoh GR…)'; sel.appendChild(o); }
   let group = null, og = null;
   for (const [k, lk] of Object.entries(LOOKS)) {
     if (lk.group !== group) { group = lk.group; og = document.createElement('optgroup'); og.label = group; sel.appendChild(og); }
@@ -224,12 +225,15 @@ export function initBatch({ getCurrent, toast }) {
         const W = full.w, H = full.h;
         const base = { exposure: baselineExposure(dec.raw) };
         let params;
-        if (opts.mode === 'sync') params = { ...opts.syncParams, look: opts.look, lookAmount: opts.lookAmount };
+        // filtre : choisi, ou déduit du mode « Image Control » enregistré par le boîtier
+        const mode = opts.look === 'camera' ? readCameraMode(exif) : null;
+        const look = opts.look === 'camera' ? (mode?.look || 'none') : opts.look;
+        if (opts.mode === 'sync') params = { ...opts.syncParams, look, lookAmount: opts.lookAmount };
         else {
-          const a = suggestSettings(prev.data, prev.w * prev.h, { w: prev.w, h: prev.h, iso: dec.raw?.iso_speed, look: opts.look, lookAmount: opts.lookAmount }).auto;
+          const a = suggestSettings(prev.data, prev.w * prev.h, { w: prev.w, h: prev.h, iso: dec.raw?.iso_speed, look, lookAmount: opts.lookAmount }).auto;
           a.exposure = round2(a.exposure - base.exposure);
           if (Math.abs(a.exposure) < 0.1) a.exposure = 0;
-          params = { ...DEFAULT_PARAMS, ...a, look: opts.look, lookAmount: opts.lookAmount };
+          params = { ...DEFAULT_PARAMS, ...a, look, lookAmount: opts.lookAmount };
         }
         const geom = structuredClone(DEFAULT_GEOM);
         let note = '';
@@ -247,11 +251,14 @@ export function initBatch({ getCurrent, toast }) {
             note = ` · redressé ${ang > 0 ? '+' : ''}${ang.toFixed(1).replace('.', ',')}°${src}`;
           }
         }
+        if (mode) note += ` · mode « ${mode.name} »${mode.look ? ` → ${LOOKS[mode.look].name}` : ''}`;
         drawThumb(row.canvas, prev, params, base);
 
         row.state.textContent = 'Export JPG…';
+        const pr = makeProcessor(params, base);
         const res = await exportJpeg({
           full, params, base, geom, quality: 100,
+          glow: pr.spec.hal ? buildGlowMap(prev.data, prev.w, prev.h, pr) : null,
           exif: exportExifFields(dec.raw, exif),
           onProgress: (v) => { row.state.textContent = `Export JPG… ${Math.round(v * 100)} %`; progress(0.5 + v * 0.45); },
         });
