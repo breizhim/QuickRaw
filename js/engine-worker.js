@@ -1,3 +1,5 @@
+import { createSharedImage } from './qr-wasm.js';
+
 // Worker « moteur » : tâches lourdes hors du thread principal.
 //  - preview : réduction de l'image (moyenne de boîtes) → Float32 linéaire 0..1
 //  - share   : copie de l'image pleine résolution dans un SharedArrayBuffer,
@@ -8,17 +10,23 @@ self.onmessage = ({ data: msg }) => {
       const prev = makePreview(msg.data, msg.width, msg.height, msg.previewMax);
       self.postMessage({ id: msg.id, ok: true, preview: prev }, [prev.data.buffer]);
     } else if (msg.type === 'share' || msg.type === 'sharePreview') {
-      let data = msg.data;
+      let data = msg.data, wasm = null;
       if (typeof SharedArrayBuffer !== 'undefined' && self.crossOriginIsolated) {
-        const shared = new Uint16Array(new SharedArrayBuffer(data.byteLength));
-        shared.set(data);
-        data = shared;
+        // de préférence dans la mémoire du module WebAssembly d'export (voir qr-wasm.js)
+        wasm = createSharedImage(data, msg.width, msg.height);
+        if (wasm) data = wasm.data;
+        else {
+          const shared = new Uint16Array(new SharedArrayBuffer(data.byteLength));
+          shared.set(data);
+          data = shared;
+        }
       }
+      const extra = wasm ? { memory: wasm.memory, layout: wasm.layout } : {};
       // sharePreview (traitement par lot) : copie partagée + aperçu réduit en un seul aller-retour
       if (msg.type === 'sharePreview') {
         const prev = makePreview(data, msg.width, msg.height, msg.previewMax);
-        self.postMessage({ id: msg.id, ok: true, data, preview: prev }, [prev.data.buffer]);
-      } else self.postMessage({ id: msg.id, ok: true, data });
+        self.postMessage({ id: msg.id, ok: true, data, ...extra, preview: prev }, [prev.data.buffer]);
+      } else self.postMessage({ id: msg.id, ok: true, data, ...extra });
     }
   } catch (e) {
     self.postMessage({ id: msg.id, ok: false, error: String(e && e.message || e) });

@@ -240,7 +240,7 @@ export function initBatch({ getCurrent, toast }) {
 
         row.state.textContent = 'Export JPG…';
         const res = await exportJpeg({
-          full: { data: sp.data, w: W, h: H }, params, base, geom, quality: 100,
+          full: { data: sp.data, w: W, h: H, memory: sp.memory, layout: sp.layout }, params, base, geom, quality: 100,
           exif: exportExifFields(dec.raw, exif),
           onProgress: (v) => { row.state.textContent = `Export JPG… ${Math.round(v * 100)} %`; progress(0.5 + v * 0.45); },
         });

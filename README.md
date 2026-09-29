@@ -42,9 +42,12 @@ envoyé sur un serveur, tout est traité sur l'appareil (ordinateur ou mobile).
   permet d'éditer tout de suite ; le dématriçage AHD pleine résolution se fait
   en arrière-plan (indicateur en haut à droite de l'image).
 - **Export JPG qualité 100 %, pleine résolution** (aucune mise à l'échelle) :
-  encodeur JPEG en JavaScript (4:4:4, tables de quantification à 1), parallélisé
-  sur tous les cœurs (bandes séparées par des marqueurs RST, image partagée via
-  `SharedArrayBuffer`), sans passer par un canvas (limité en taille sur mobile). Les
+  moteur **WebAssembly SIMD** écrit en C (`native/qr.c` : rendu des réglages et
+  filtres 4 pixels à la fois + encodeur JPEG baseline 4:4:4, tables de
+  quantification à 1), environ 3× plus rapide que la version JavaScript, qui
+  reste utilisée en secours. Parallélisé sur tous les cœurs (bandes séparées par
+  des marqueurs RST, image dans la mémoire partagée du module), sans passer par
+  un canvas (limité en taille sur mobile). Les
   principales données EXIF (appareil, objectif, date, vitesse, ouverture, ISO,
   focale) sont recopiées. Sur mobile, bouton *Partager / Enregistrer*.
 - **Traitement par lot** (bouton *Lot*, ou sélection / glisser-déposer de
@@ -71,6 +74,16 @@ node tools/serve.mjs          # http://localhost:8080/
 
 Ouvrir `index.html` directement (`file://`) ne fonctionne pas.
 
+## Recompiler le module d'export
+
+`vendor/qr/qr.wasm` est versionné : aucune compilation n'est nécessaire pour
+héberger le site. Après une modification de `native/qr.c` (ou des formules de
+`js/pipeline.js`, que le C reproduit) :
+
+```sh
+native/build.sh   # clang ≥ 16 avec la cible wasm32 + wasm-ld (paquets clang et lld)
+```
+
 ## Hébergement
 
 Le site est 100 % statique (aucune étape de build). Sur un hébergeur qui ne permet
@@ -93,7 +106,9 @@ chargement. HTTPS est requis (sauf `localhost`).
 | `js/jpeg-encoder.js` | Encodeur JPEG baseline + écriture EXIF |
 | `js/metadata.js` | Lecture (exifr + LibRaw) et affichage des métadonnées |
 | `coi-sw.js` | Service worker COOP/COEP |
-| `vendor/` | LibRaw-WASM et exifr (voir `vendor/README.md`) |
+| `native/qr.c`, `native/build.sh` | Cœur d'export en C → `vendor/qr/qr.wasm` |
+| `js/qr-wasm.js` | Chargement du module, mémoire partagée, paramètres |
+| `vendor/` | LibRaw-WASM, exifr, module d'export compilé (voir `vendor/README.md`) |
 
 ## Limites
 

@@ -104,9 +104,9 @@ async function openFile(file) {
     before.canvas = null;
     state.fullP = fullP
       .then(async (f) => {
-        const sh = await engine.call({ type: 'share', data: f.data }, [f.data.buffer]);
+        const sh = await engine.call({ type: 'share', data: f.data, width: f.width, height: f.height }, [f.data.buffer]);
         if (loadId !== state.loadId) return null;
-        state.full = { data: sh.data, w: f.width, h: f.height };
+        state.full = { data: sh.data, w: f.width, h: f.height, memory: sh.memory, layout: sh.layout };
         state.SW = f.width; state.SH = f.height;
         setFullStatus('');
         return state.full;
@@ -941,7 +941,7 @@ $('#exportBtn').addEventListener('click', async () => {
     lastExportUrl = URL.createObjectURL(blob);
     const name = baseName() + '.jpg';
     lastExportFile = new File([blob], name, { type: 'image/jpeg' });
-    $('#exportInfo').textContent = `${name} — ${res.outW} × ${res.outH} px, qualité 100 %, ${(blob.size / 1048576).toFixed(1)} Mo (${((performance.now() - t0) / 1000).toFixed(1)} s).`;
+    $('#exportInfo').textContent = `${name} — ${res.outW} × ${res.outH} px, qualité 100 %, ${(blob.size / 1048576).toFixed(1)} Mo (${((performance.now() - t0) / 1000).toFixed(1)} s${res.engine === 'wasm' ? ', moteur WebAssembly' : ''}).`;
     const dl = $('#exportDownload'); dl.href = lastExportUrl; dl.download = name;
     $('#exportShare').hidden = !(navigator.canShare && navigator.canShare({ files: [lastExportFile] }));
     $('#exportDialog').showModal();

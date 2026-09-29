@@ -2,12 +2,13 @@
 // résolution (lignes de blocs [s0, s1[). Plusieurs workers travaillent en
 // parallèle sur la même image (SharedArrayBuffer) ; les bandes sont séparées
 // par des marqueurs RST, ce qui permet de simplement les concaténer.
-import { makeProcessor, exportMapping } from './pipeline.js';
+import { makeProcessor, exportMapping, ENC_LUT } from './pipeline.js';
+import { setupSlot } from './qr-wasm.js';
 import { JpegEncoder } from './jpeg-encoder.js';
 
 self.onmessage = ({ data: msg }) => {
   try {
-    const chunks = encodeBand(msg);
+    const chunks = msg.wasm ? encodeBandWasm(msg) : encodeBand(msg);
     self.postMessage({ done: true, chunks }, chunks.map((c) => c.buffer));
   } catch (e) {
     self.postMessage({ error: String(e && e.message || e) });
@@ -62,4 +63,27 @@ function encodeBand({ data, SW, SH, params, base, geom, quality, s0, s1, totalSt
   }
   if (done) self.postMessage({ progress: done });
   return enc.finish(false);
+}
+
+// Même travail, par le module WebAssembly (SIMD) : l'image est lue directement
+// dans la mémoire partagée du module.
+function encodeBandWasm({ SW, SH, params, base, geom, quality, s0, s1, totalStrips, wasm }) {
+  const { module, memory, layout, slot } = wasm;
+  const pr = makeProcessor(params, base);
+  const map = exportMapping(SW, SH, geom);
+  const X = setupSlot(module, memory, slot, pr.spec, ENC_LUT, map, !geom.angle, quality);
+  const chunks = [];
+  let lastReport = 0, done = 0;
+  for (let s = s0; s < s1; s++) {
+    const rows = Math.min(8, map.outH - s * 8);
+    const n = X.enc_strip(slot, layout.img, SW, SH, s * 8, rows, s < totalStrips - 1 ? s : -1);
+    if (n) chunks.push(new Uint8Array(memory.buffer, slot + X.out_offset(slot), n).slice());
+    done++;
+    const now = Date.now();
+    if (now - lastReport > 150) { lastReport = now; self.postMessage({ progress: done }); done = 0; }
+  }
+  const n = X.enc_finish(slot);
+  if (n) chunks.push(new Uint8Array(memory.buffer, slot + X.out_offset(slot), n).slice());
+  if (done) self.postMessage({ progress: done });
+  return chunks;
 }

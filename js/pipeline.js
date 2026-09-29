@@ -305,10 +305,12 @@ export function makeProcessor(params, base = {}) {
     out[o + 2] = enc[b >= 1 ? 65535 : b <= 0 ? 0 : (b * 65535 + 0.5) | 0];
   }
 
-  return { pixel, params: p };
+  // Paramètres précalculés, réutilisés tels quels par l'export WebAssembly (native/qr.c)
+  const spec = { mr, mg, mb, mono, la, gain, K, sat, vib, hasHue, lookSat, lookLum, lookShift, split };
+  return { pixel, params: p, spec };
 }
 
-const ENC_LUT = (() => {
+export const ENC_LUT = (() => {
   const t = new Uint8Array(65536);
   for (let i = 0; i < 65536; i++) t[i] = Math.round(srgbEncode(i / 65535) * 255);
   return t;
