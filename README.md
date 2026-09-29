@@ -38,9 +38,14 @@ envoyé sur un serveur, tout est traité sur l'appareil (ordinateur ou mobile).
   tag LevelInfo 0x022B) quand il est renseigné ; sinon détection des lignes
   horizontales / verticales dominantes (tenseur de structure + histogramme
   d'orientations).
-- **Ouverture rapide** : un premier décodage en demi-taille (sans dématriçage)
-  permet d'éditer tout de suite ; le dématriçage AHD pleine résolution se fait
-  en arrière-plan (indicateur en haut à droite de l'image).
+- **Ouverture rapide** : LibRaw ne fait que l'aperçu demi-taille et la
+  décompression ; le **dématriçage pleine résolution** (capteurs Bayer) est fait
+  par le module WebAssembly sur tous les cœurs, en arrière-plan (indicateur en
+  haut à droite de l'image) : environ 2× plus rapide que LibRaw. Les noirs et
+  multiplicateurs sont **calés automatiquement** sur l'aperçu de LibRaw (y
+  compris les noirs des DNG, que la bibliothèque n'expose pas) ; si le capteur
+  n'est pas Bayer (X-Trans, monochrome…) ou si le calage n'est pas exact,
+  l'appli revient au dématriçage AHD de LibRaw.
 - **Export JPG qualité 100 %, pleine résolution** (aucune mise à l'échelle) :
   moteur **WebAssembly SIMD** écrit en C (`native/qr.c` : rendu des réglages et
   filtres 4 pixels à la fois + encodeur JPEG baseline 4:4:4, tables de
@@ -102,13 +107,20 @@ chargement. HTTPS est requis (sauf `localhost`).
 | `js/engine-worker.js` | Aperçu réduit, copie de l'image en mémoire partagée |
 | `js/exporter.js`, `js/export-worker.js` | Export JPEG parallèle par bandes |
 | `js/batch.js`, `js/zip.js` | Traitement par lot, archives ZIP |
-| `js/decode.js`, `js/engine.js` | Décodage des fichiers, accès au worker moteur |
+| `js/decode.js`, `js/engine.js` | Décodage des fichiers, calage, accès au worker moteur |
+| `js/rawload.js`, `js/demosaic.js`, `js/linear.js` | Chargement RAW, dématriçage parallèle, linéarisation |
 | `js/jpeg-encoder.js` | Encodeur JPEG baseline + écriture EXIF |
 | `js/metadata.js` | Lecture (exifr + LibRaw) et affichage des métadonnées |
 | `coi-sw.js` | Service worker COOP/COEP |
 | `native/qr.c`, `native/build.sh` | Cœur d'export en C → `vendor/qr/qr.wasm` |
 | `js/qr-wasm.js` | Chargement du module, mémoire partagée, paramètres |
 | `vendor/` | LibRaw-WASM, exifr, module d'export compilé (voir `vendor/README.md`) |
+
+## Note technique : sortie de LibRaw-WASM
+
+`libraw-wasm` 1.6.0 ignore l'option `gamm` : ses sorties 16 bits sont toujours
+encodées avec la courbe BT.709 par défaut de LibRaw. QuickRaw les linéarise
+(`js/linear.js`) avant tout traitement.
 
 ## Limites
 

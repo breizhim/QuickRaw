@@ -1,4 +1,5 @@
 import { createSharedImage } from './qr-wasm.js';
+import { halfToLinear } from './linear.js';
 
 // Worker « moteur » : tâches lourdes hors du thread principal.
 //  - preview : réduction de l'image (moyenne de boîtes) → Float32 linéaire 0..1
@@ -6,7 +7,12 @@ import { createSharedImage } from './qr-wasm.js';
 //              lu en parallèle par les workers d'export
 self.onmessage = ({ data: msg }) => {
   try {
-    if (msg.type === 'preview') {
+    if (msg.type === 'previewRaw') {
+      // aperçu LibRaw demi-taille (couleurs capteur, courbe BT.709) → linéaire sRGB → réduit
+      const lin = halfToLinear(msg.half, { color_data: { rgb_cam: msg.rgbCam } });
+      const prev = makePreview(lin.data, lin.width, lin.height, msg.previewMax);
+      self.postMessage({ id: msg.id, ok: true, preview: prev }, [prev.data.buffer]);
+    } else if (msg.type === 'preview') {
       const prev = makePreview(msg.data, msg.width, msg.height, msg.previewMax);
       self.postMessage({ id: msg.id, ok: true, preview: prev }, [prev.data.buffer]);
     } else if (msg.type === 'share' || msg.type === 'sharePreview') {

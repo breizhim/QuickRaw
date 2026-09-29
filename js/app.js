@@ -1,6 +1,5 @@
-import LibRaw from '../vendor/libraw/index.js';
 import { engine } from './engine.js';
-import { RAW_SETTINGS, isStandardImage, toRGB16, decodeStandard, decodeFull, exportExifFields, baselineExposure } from './decode.js';
+import { isStandardImage, decodeStandard, exportExifFields, baselineExposure } from './decode.js';
 import {
   DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, orientedSize,
   inscribedCrop, cropInside, srgbDecode,
@@ -9,6 +8,7 @@ import { renderedStats, suggestSettings, detectStraighten, SCOPE_GAIN } from './
 import { exportJpeg } from './exporter.js';
 import { readLevel, levelAngle } from './level.js';
 import { initBatch } from './batch.js';
+import { loadRaw } from './rawload.js';
 import { readExif, buildSections, renderSections, sectionsToJSON } from './metadata.js';
 
 const $ = (s) => document.querySelector(s);
@@ -67,7 +67,7 @@ async function openFile(file) {
     const exif = await readExif(buf);
     const isStd = isStandardImage(buf);
     const level = readLevel(exif); // niveau électronique de l'appareil (Ricoh GR, Pentax…)
-    let data, width, height, raw = null, fullP, half = null;
+    let data, width, height, raw = null, fullP, half = null, rawPreviewFor = null;
     const loadId = ++state.loadId;
 
     if (isStd) {
@@ -76,25 +76,19 @@ async function openFile(file) {
       fullP = Promise.resolve({ data, width, height });
     } else {
       // 1) Décodage rapide en demi-taille (sans dématriçage) pour éditer tout de suite
-      busy('Décodage du RAW (aperçu rapide)…');
-      const lr = new LibRaw();
-      try {
-        await lr.open(new Uint8Array(buf.slice(0)), { ...RAW_SETTINGS, halfSize: true });
-        raw = await lr.metadata(true);
-        const img = await lr.imageData();
-        if (!img || !img.data) throw new Error('Décodage impossible');
-        data = toRGB16(img);
-        // dimensions pleine résolution (le demi-format est exactement la moitié)
-        width = img.width * 2; height = img.height * 2;
-        half = { w: img.width, h: img.height };
-      } finally { lr.dispose(); }
-      // 2) Dématriçage pleine résolution en arrière-plan (nécessaire pour l'export)
-      fullP = decodeFull(buf);
+      busy('Décodage du RAW…');
+      const r = await loadRaw(buf);
+      raw = r.meta;
+      rawPreviewFor = r.previewFor;
+      half = { w: r.half.width, h: r.half.height };
+      // dimensions pleine résolution (le demi-format est exactement la moitié)
+      width = half.w * 2; height = half.h * 2;
+      fullP = r.fullP;
     }
 
     busy('Préparation de l\'aperçu…');
     const pw = half ? half.w : width, ph = half ? half.h : height;
-    const res = await engine.call({ type: 'preview', data, width: pw, height: ph, previewMax: PREVIEW_MAX }, isStd ? [] : [data.buffer]);
+    const res = rawPreviewFor ? await rawPreviewFor(PREVIEW_MAX) : await engine.call({ type: 'preview', data, width: pw, height: ph, previewMax: PREVIEW_MAX });
     Object.assign(state, {
       file, exif, raw, SW: width, SH: height, preview: res.preview, full: null,
       params: { ...DEFAULT_PARAMS }, geom: structuredClone(DEFAULT_GEOM), aspect: null, autoCrop: true, portrait: height > width,
@@ -104,8 +98,9 @@ async function openFile(file) {
     before.canvas = null;
     state.fullP = fullP
       .then(async (f) => {
-        const sh = await engine.call({ type: 'share', data: f.data, width: f.width, height: f.height }, [f.data.buffer]);
+        const sh = f.memory ? f : await engine.call({ type: 'share', data: f.data, width: f.width, height: f.height }, [f.data.buffer]);
         if (loadId !== state.loadId) return null;
+        if (f.engine) console.info(`Pleine résolution : ${f.engine === 'wasm' ? 'dématriçage WebAssembly' : 'LibRaw'} en ${Math.round(f.ms)} ms`);
         state.full = { data: sh.data, w: f.width, h: f.height, memory: sh.memory, layout: sh.layout };
         state.SW = f.width; state.SH = f.height;
         setFullStatus('');

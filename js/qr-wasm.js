@@ -9,10 +9,23 @@ const BASE = 1 << 20;
 const OFF_STRIP = 1024 + 16384 + 65536 + 256 + 256 + 8192 + 64 + 1024; // = native/qr.c
 export const slotSize = (w) => ((OFF_STRIP + w * 72 + 4096) + 65535) & ~65535;
 
-export function layoutFor(SW, SH) {
+export function layoutFor(SW, SH, mosaicPixels = 0) {
   const ss = slotSize(Math.max(SW, SH)); // la sortie peut être tournée de 90°
   const img = BASE + NSLOT * ss;
-  return { slots: BASE, slotSize: ss, img, bytes: img + SW * SH * 6 };
+  const mosaic = img + SW * SH * 6;      // plan brut du capteur (dématriçage), facultatif
+  return { slots: BASE, slotSize: ss, img, mosaic, bytes: mosaic + mosaicPixels * 2 };
+}
+
+// Mémoire pour le dématriçage : image de sortie orientée + plan brut (zone visible)
+export function createMosaicMemory(raw, flip) {
+  const { raw_width: RW, top_margin: T, left_margin: L, width: W, height: H } = raw;
+  const [OW, OH] = flip & 4 ? [H, W] : [W, H];
+  const layout = layoutFor(OW, OH, W * H);
+  const pages = Math.ceil(layout.bytes / 65536);
+  const memory = new WebAssembly.Memory({ initial: pages, maximum: pages, shared: true });
+  const plane = new Uint16Array(memory.buffer, layout.mosaic, W * H);
+  for (let y = 0; y < H; y++) plane.set(raw.data.subarray((y + T) * RW + L, (y + T) * RW + L + W), y * W);
+  return { memory, layout, W, H, OW, OH, data: new Uint16Array(memory.buffer, layout.img, OW * OH * 3) };
 }
 
 // Copie l'image dans une mémoire WebAssembly partagée. Renvoie null si impossible.

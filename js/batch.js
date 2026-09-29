@@ -3,7 +3,8 @@
 // Sorties : dossier (File System Access, ordinateur), archive ZIP découpée en
 // parties, ou partage (feuille de partage mobile → « Enregistrer dans Photos »).
 import { engine } from './engine.js';
-import { isStandardImage, decodeFull, decodeStandard, exportExifFields, baselineExposure } from './decode.js';
+import { isStandardImage, decodeStandard, exportExifFields, baselineExposure } from './decode.js';
+import { loadRaw } from './rawload.js';
 import { readExif } from './metadata.js';
 import { suggestSettings, detectStraighten } from './analysis.js';
 import { DEFAULT_PARAMS, DEFAULT_GEOM, LOOKS, makeProcessor, processRGBA, inscribedCrop } from './pipeline.js';
@@ -202,16 +203,26 @@ export function initBatch({ getCurrent, toast }) {
         row.state.textContent = 'Décodage…';
         const buf = await file.arrayBuffer();
         const exif = await readExif(buf);
-        let dec;
-        if (isStandardImage(buf)) dec = { ...(await decodeStandard(file)), raw: null };
-        else dec = await decodeFull(buf, { withMeta: true });
+        let dec, prev, full;
+        if (isStandardImage(buf)) {
+          dec = { ...(await decodeStandard(file)), raw: null };
+          row.state.textContent = 'Analyse…';
+          const sp = await engine.call({ type: 'sharePreview', data: dec.data, width: dec.width, height: dec.height, previewMax: 1200 }, [dec.data.buffer]);
+          prev = sp.preview; full = { data: sp.data, w: dec.width, h: dec.height, memory: sp.memory, layout: sp.layout };
+        } else {
+          // aperçu LibRaw demi-taille + dématriçage WebAssembly multi-cœur (repli LibRaw)
+          const r = await loadRaw(buf);
+          dec = { raw: r.meta };
+          const pv = await r.previewFor(1200);
+          prev = pv.preview;
+          row.state.textContent = 'Dématriçage…';
+          const f = await r.fullP;
+          full = { data: f.data, w: f.width, h: f.height, memory: f.memory, layout: f.layout };
+        }
         progress(0.45);
-
         row.state.textContent = 'Analyse…';
-        const { width: W, height: H } = dec;
-        const sp = await engine.call({ type: 'sharePreview', data: dec.data, width: W, height: H, previewMax: 1200 }, [dec.data.buffer]);
-        dec.data = null;
-        const prev = sp.preview, base = { exposure: baselineExposure(dec.raw) };
+        const W = full.w, H = full.h;
+        const base = { exposure: baselineExposure(dec.raw) };
         let params;
         if (opts.mode === 'sync') params = { ...opts.syncParams, look: opts.look, lookAmount: opts.lookAmount };
         else {
@@ -240,7 +251,7 @@ export function initBatch({ getCurrent, toast }) {
 
         row.state.textContent = 'Export JPG…';
         const res = await exportJpeg({
-          full: { data: sp.data, w: W, h: H, memory: sp.memory, layout: sp.layout }, params, base, geom, quality: 100,
+          full, params, base, geom, quality: 100,
           exif: exportExifFields(dec.raw, exif),
           onProgress: (v) => { row.state.textContent = `Export JPG… ${Math.round(v * 100)} %`; progress(0.5 + v * 0.45); },
         });

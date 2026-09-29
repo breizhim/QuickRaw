@@ -6,7 +6,24 @@ import { makeProcessor, exportMapping, ENC_LUT } from './pipeline.js';
 import { setupSlot } from './qr-wasm.js';
 import { JpegEncoder } from './jpeg-encoder.js';
 
+let dmX = null; // instance du module pour le dématriçage (voir demosaic.js)
+
 self.onmessage = ({ data: msg }) => {
+  if (msg.type === 'dm-init' || msg.type === 'dm') {
+    try {
+      if (msg.type === 'dm-init') dmX = new WebAssembly.Instance(msg.module, { env: { memory: msg.memory } }).exports;
+      else {
+        // par paquets de lignes : de nombreux appels courts laissent le moteur
+        // passer au code WebAssembly optimisé après les premiers paquets
+        const { fn, args, lo, hi, a, b, chunk } = msg;
+        for (let s = a; s < b; s += chunk) { args[lo] = s; args[hi] = Math.min(b, s + chunk); dmX[fn](...args); }
+      }
+      self.postMessage({ id: msg.id, ok: true });
+    } catch (e) {
+      self.postMessage({ id: msg.id, error: String(e && e.message || e) });
+    }
+    return;
+  }
   try {
     const chunks = msg.wasm ? encodeBandWasm(msg) : encodeBand(msg);
     self.postMessage({ done: true, chunks }, chunks.map((c) => c.buffer));

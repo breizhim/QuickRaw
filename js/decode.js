@@ -14,7 +14,11 @@ export function isStandardImage(buf) {
   return STD_MAGIC.some((m) => m.every((b, i) => head[i] === b));
 }
 
-// Dématriçage pleine résolution. `buf` est transféré (détaché) vers LibRaw.
+import { INV709, linearize709 } from './linear.js';
+export { linearize709 };
+
+// Dématriçage pleine résolution par LibRaw (AHD, mono-cœur) : chemin de repli.
+// `buf` est transféré (détaché) vers LibRaw.
 export async function decodeFull(buf, { withMeta = false } = {}) {
   const lr = new LibRaw();
   try {
@@ -22,8 +26,70 @@ export async function decodeFull(buf, { withMeta = false } = {}) {
     const raw = withMeta ? await lr.metadata(true) : null;
     const img = await lr.imageData();
     if (!img || !img.data) throw new Error('Décodage impossible');
-    return { data: toRGB16(img), width: img.width, height: img.height, raw };
+    const data = toRGB16(img);
+    if (img.bits === 16) linearize709(data);
+    return { data, width: img.width, height: img.height, raw };
   } finally { lr.dispose(); }
+}
+
+// Lecture rapide : aperçu demi-taille (couleurs capteur, sans dématriçage) +
+// données brutes du capteur, avec une seule instance LibRaw.
+export async function openRaw(buf) {
+  const lr = new LibRaw();
+  try {
+    await lr.open(new Uint8Array(buf), { ...RAW_SETTINGS, halfSize: true, outputColor: 0 });
+    const pre = await lr.metadata(false); // dimensions réelles (le traitement demi-taille les remplace ensuite)
+    const half = await lr.imageData();
+    if (!half || !half.data) throw new Error('Décodage impossible');
+    const meta = await lr.metadata(true);
+    let raw = null;
+    try {
+      raw = await lr.rawImageData();
+      if (raw) { raw.width = pre.width; raw.height = pre.height; }
+    } catch { /* format sans données brutes exploitables */ }
+    return { half, meta, raw };
+  } finally { lr.dispose(); }
+}
+
+export { halfToLinear, rgbCam3 } from './linear.js';
+
+// Calage des noirs et multiplicateurs par canal : chaque pixel de l'aperçu
+// demi-taille de LibRaw dépend exactement d'un bloc 2×2 du capteur, ce qui
+// permet de retrouver par régression les paramètres réels (y compris ceux que
+// la bibliothèque n'expose pas, comme les noirs des DNG). Échoue proprement
+// (ok = false) pour les capteurs non Bayer ou si la relation n'est pas exacte.
+export function calibrate(half, raw, meta) {
+  const fail = (why) => ({ ok: false, why });
+  if (!raw || !raw.data || half.colors !== 3) return fail('données brutes indisponibles');
+  if (meta?.is_foveon || (meta?.colors && meta.colors !== 3)) return fail('capteur non Bayer');
+  const { raw_width: RW, top_margin: T, left_margin: L, width: VW, height: VH } = raw;
+  if (!RW || raw.data.length < RW * (raw.raw_height || 0)) return fail('format brut inattendu');
+  const W = half.width, H = half.height, hd = half.data, rd = raw.data;
+  if (Math.abs(2 * W - VW) > 1 || Math.abs(2 * H - VH) > 1) return fail('dimensions incohérentes');
+  const lin = (o) => INV709[o];
+  const fit = (c, subs) => { // régression lin = s·(v − b)
+    let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0;
+    for (let y = 4; y < H - 4; y += 5) for (let x = 4; x < W - 4; x += 5) {
+      const o = hd[(y * W + x) * 3 + c]; if (o < 1500 || o > 63000) continue;
+      let v = 0; for (const k of subs) v += rd[(2 * y + (k >> 1) + T) * RW + 2 * x + (k & 1) + L]; v /= subs.length;
+      const l = lin(o); n++; sx += v; sy += l; sxx += v * v; sxy += v * l; syy += l * l;
+    }
+    if (n < 500) return null;
+    const s = (n * sxy - sx * sy) / (n * sxx - sx * sx), b = (sx - sy / s) / n;
+    const r = (n * sxy - sx * sy) / Math.sqrt((n * sxx - sx * sx) * (n * syy - sy * sy));
+    return { s, b, r };
+  };
+  const best = (c) => { let bst = null; for (let k = 0; k < 4; k++) { const f = fit(c, [k]); if (f && (!bst || f.r > bst.r)) bst = { ...f, k }; } return bst; };
+  const R = best(0), B = best(2);
+  if (!R || !B || R.k === B.k || R.k + B.k !== 3) return fail('motif CFA non reconnu');
+  const gs = [0, 1, 2, 3].filter((k) => k !== R.k && k !== B.k);
+  const G = fit(1, gs);
+  if (!G) return fail('pas assez de pixels exploitables');
+  const ok = R.r > 0.99995 && B.r > 0.99995 && G.r > 0.9999 && R.s > 0 && G.s > 0 && B.s > 0;
+  let cfa = 0;
+  cfa |= 0 << (R.k * 2); cfa |= 2 << (B.k * 2); for (const k of gs) cfa |= 1 << (k * 2);
+  return { ok, why: ok ? '' : `calage imprécis (${R.r.toFixed(6)}, ${G.r.toFixed(6)}, ${B.r.toFixed(6)})`,
+    cfa, black: [R.b, G.b, B.b], scale: [R.s, G.s, B.s], corr: [R.r, G.r, B.r] };
 }
 
 export function toRGB16(img) {

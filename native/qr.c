@@ -577,3 +577,133 @@ EXPORT(enc_finish) int enc_finish(u8 *slot) {
   flush_bytes(st, out);
   return st->outPos;
 }
+
+// ======================================================================
+// Dématriçage Bayer (remplace celui de LibRaw, mono-cœur) : exécuté en
+// parallèle par bandes de lignes, en 4 phases séparées par des barrières
+// (orchestrées côté JavaScript) :
+//   0. mise à l'échelle du plan brut : (v − noir) × échelle, écrêté à 65535
+//      (identique au scale_colors de LibRaw, paramètres calés sur son aperçu)
+//   1. vert en chaque pixel : interpolation directionnelle Hamilton-Adams,
+//      pondérée par les gradients horizontaux / verticaux
+//   2. rouge et bleu : interpolation des différences de couleur (C − V)
+//   3. matrice caméra → sRGB (rgb_cam de LibRaw), sortie linéaire 16 bits
+// La sortie est écrite directement dans l'orientation finale (flip LibRaw).
+//
+// cfa : 4 couleurs du motif 2×2 (0 = R, 1 = V, 2 = B), en 2 bits : (y&1)*2+(x&1)
+// ======================================================================
+
+static inline float fmn(float a, float b) { return a < b ? a : b; }
+static inline float fmx(float a, float b) { return a > b ? a : b; }
+static inline int cfa_at(int cfa, int y, int x) { return (cfa >> ((((y & 1) << 1) | (x & 1)) << 1)) & 3; }
+// miroir de bord conservant la parité (le motif CFA reste cohérent)
+static inline int refl(int i, int n) { if (i < 0) i = -i; if (i >= n) i = 2 * n - 2 - i; return i; }
+
+// index du pixel source (y, x) dans l'image de sortie orientée (× 3 canaux)
+static inline long out_index(int y, int x, int W, int H, int flip) {
+  int r = (flip & 2) ? H - 1 - y : y, c = (flip & 1) ? W - 1 - x : x;
+  return (flip & 4) ? ((long)c * H + r) * 3 : ((long)r * W + c) * 3;
+}
+
+EXPORT(dm_scale) void dm_scale(uint16_t *plane, int W, int y0, int y1, int cfa,
+                               double b0, double b1, double b2, double s0, double s1, double s2) {
+  for (int y = y0; y < y1; y++) {
+    uint16_t *p = plane + (long)y * W;
+    int ce = cfa_at(cfa, y, 0), co = cfa_at(cfa, y, 1);
+    double be = ce == 0 ? b0 : ce == 1 ? b1 : b2, se = ce == 0 ? s0 : ce == 1 ? s1 : s2;
+    double bo = co == 0 ? b0 : co == 1 ? b1 : b2, so = co == 0 ? s0 : co == 1 ? s1 : s2;
+    for (int x = 0; x < W; x += 2) {
+      double v = (p[x] - be) * se; p[x] = v <= 0 ? 0 : v >= 65535 ? 65535 : (uint16_t)(v + 0.5);
+      if (x + 1 < W) { v = (p[x + 1] - bo) * so; p[x + 1] = v <= 0 ? 0 : v >= 65535 ? 65535 : (uint16_t)(v + 0.5); }
+    }
+  }
+}
+
+EXPORT(dm_green) void dm_green(const uint16_t *plane, uint16_t *img, int W, int H, int y0, int y1, int cfa, int flip) {
+  for (int y = y0; y < y1; y++) {
+    int inner = y >= 2 && y < H - 2;
+    // pas de la sortie le long d'une ligne source (orientation finale)
+    long o0 = out_index(y, 0, W, H, flip), ostep = W > 1 ? out_index(y, 1, W, H, flip) - o0 : 0;
+    for (int x = 0; x < W; x++) {
+      long o = o0 + ostep * x;
+      int fast = inner && x >= 2 && x < W - 2;
+      const uint16_t *pp = plane + (long)y * W + x;
+#define PV(yy, xx) (fast ? (float)pp[(long)((yy) - y) * W + ((xx) - x)] : (float)plane[(long)refl(yy, H) * W + refl(xx, W)])
+      float C = PV(y, x);
+      if (cfa_at(cfa, y, x) == 1) { img[o + 1] = (uint16_t)C; continue; }
+      float gl = PV(y, x - 1), gr = PV(y, x + 1), gu = PV(y - 1, x), gd = PV(y + 1, x);
+      float cl = PV(y, x - 2), cr = PV(y, x + 2), cu = PV(y - 2, x), cd = PV(y + 2, x);
+      float lh = 2 * C - cl - cr, lv = 2 * C - cu - cd;
+      // gradients (+ ceux des lignes / colonnes voisines, plus robustes)
+      float dh = __builtin_fabsf(gl - gr) + __builtin_fabsf(lh)
+               + 0.5f * (__builtin_fabsf(PV(y - 1, x - 1) - PV(y - 1, x + 1)) + __builtin_fabsf(PV(y + 1, x - 1) - PV(y + 1, x + 1)));
+      float dv = __builtin_fabsf(gu - gd) + __builtin_fabsf(lv)
+               + 0.5f * (__builtin_fabsf(PV(y - 1, x - 1) - PV(y + 1, x - 1)) + __builtin_fabsf(PV(y - 1, x + 1) - PV(y + 1, x + 1)));
+      float eh = 0.5f * (gl + gr) + 0.25f * lh, ev = 0.5f * (gu + gd) + 0.25f * lv;
+      float wh = 1.0f / ((1.0f + dh) * (1.0f + dh)), wv = 1.0f / ((1.0f + dv) * (1.0f + dv));
+      float g = (wh * eh + wv * ev) / (wh + wv);
+      // limite le dépassement aux valeurs vertes voisines (évite les halos)
+      float mn = fmn(fmn(gl, gr), fmn(gu, gd));
+      float mx = fmx(fmx(gl, gr), fmx(gu, gd));
+      float span = mx - mn;
+      mn -= 0.5f * span; mx += 0.5f * span;
+      g = g < mn ? mn : g > mx ? mx : g;
+      img[o + 1] = g <= 0 ? 0 : g >= 65535 ? 65535 : (uint16_t)(g + 0.5f);
+    }
+  }
+}
+
+#undef PV
+EXPORT(dm_rb) void dm_rb(const uint16_t *plane, uint16_t *img, int W, int H, int y0, int y1, int cfa, int flip) {
+  // pas de la sortie pour +1 colonne / +1 ligne source (voisins du vert interpolé)
+  long sx = W > 1 ? out_index(0, 1, W, H, flip) - out_index(0, 0, W, H, flip) : 0;
+  long sy = H > 1 ? out_index(1, 0, W, H, flip) - out_index(0, 0, W, H, flip) : 0;
+  for (int y = y0; y < y1; y++) {
+    int inner = y >= 1 && y < H - 1;
+    long o0 = out_index(y, 0, W, H, flip);
+    for (int x = 0; x < W; x++) {
+      long o = o0 + sx * x;
+      int fast = inner && x >= 1 && x < W - 1;
+      const uint16_t *pp = plane + (long)y * W + x;
+#define PV(yy, xx) (fast ? (float)pp[(long)((yy) - y) * W + ((xx) - x)] : (float)plane[(long)refl(yy, H) * W + refl(xx, W)])
+#define GV(yy, xx) (fast ? (float)img[o + sy * ((yy) - y) + sx * ((xx) - x) + 1] : (float)img[out_index(refl(yy, H), refl(xx, W), W, H, flip) + 1])
+      int c = cfa_at(cfa, y, x);
+      float G = img[o + 1], R, B;
+      if (c == 1) {
+        // vert : rouge et bleu sur la ligne / la colonne
+        int ch = cfa_at(cfa, y, x + 1); // couleur des voisins horizontaux
+        float hd = 0.5f * ((PV(y, x - 1) - GV(y, x - 1)) + (PV(y, x + 1) - GV(y, x + 1)));
+        float vd = 0.5f * ((PV(y - 1, x) - GV(y - 1, x)) + (PV(y + 1, x) - GV(y + 1, x)));
+        if (ch == 0) { R = G + hd; B = G + vd; } else { B = G + hd; R = G + vd; }
+      } else {
+        // rouge ou bleu : l'autre couleur est sur les diagonales
+        float C = PV(y, x);
+        float d1a = PV(y - 1, x - 1), d1b = PV(y + 1, x + 1), d2a = PV(y - 1, x + 1), d2b = PV(y + 1, x - 1);
+        float g1a = GV(y - 1, x - 1), g1b = GV(y + 1, x + 1), g2a = GV(y - 1, x + 1), g2b = GV(y + 1, x - 1);
+        float e1 = G + 0.5f * ((d1a - g1a) + (d1b - g1b)), e2 = G + 0.5f * ((d2a - g2a) + (d2b - g2b));
+        float gr1 = __builtin_fabsf(d1a - d1b) + __builtin_fabsf(2 * G - g1a - g1b);
+        float gr2 = __builtin_fabsf(d2a - d2b) + __builtin_fabsf(2 * G - g2a - g2b);
+        float w1 = 1.0f / ((1.0f + gr1) * (1.0f + gr1)), w2 = 1.0f / ((1.0f + gr2) * (1.0f + gr2));
+        float other = (w1 * e1 + w2 * e2) / (w1 + w2);
+        if (c == 0) { R = C; B = other; } else { B = C; R = other; }
+      }
+      img[o] = R <= 0 ? 0 : R >= 65535 ? 65535 : (uint16_t)(R + 0.5f);
+      img[o + 2] = B <= 0 ? 0 : B >= 65535 ? 65535 : (uint16_t)(B + 0.5f);
+    }
+  }
+#undef GV
+#undef PV
+}
+
+EXPORT(dm_color) void dm_color(uint16_t *img, long n0, long n1, double m00, double m01, double m02, double m10, double m11,
+                               double m12, double m20, double m21, double m22) {
+  float a = m00, b = m01, c = m02, d = m10, e = m11, f = m12, g = m20, h = m21, i = m22;
+  for (long k = n0; k < n1; k++) {
+    uint16_t *p = img + k * 3;
+    float R = p[0], G = p[1], B = p[2];
+    float r = a * R + b * G + c * B, gg = d * R + e * G + f * B, bb = g * R + h * G + i * B;
+    p[0] = r <= 0 ? 0 : r >= 65535 ? 65535 : (uint16_t)(r + 0.5f);
+    p[1] = gg <= 0 ? 0 : gg >= 65535 ? 65535 : (uint16_t)(gg + 0.5f);
+    p[2] = bb <= 0 ? 0 : bb >= 65535 ? 65535 : (uint16_t)(bb + 0.5f);
+  }
+}
