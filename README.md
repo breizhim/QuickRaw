@@ -16,7 +16,9 @@ envoyé sur un serveur, tout est traité sur l'appareil (ordinateur ou mobile).
   lumières), hautes lumières, ombres, blancs, noirs, contraste, vibrance,
   saturation, redressement. Chaque suggestion s'applique séparément, ou toutes
   d'un coup (« Tout appliquer »), puis s'affine avec les curseurs.
-- **Filtres** (bandeau de vignettes, intensité réglable) :
+- **Filtres** (le filtre courant s'affiche dans le panneau ; un appui ouvre la
+  fenêtre des filtres avec un aperçu de chacun, classés par catégorie ;
+  intensité réglable) :
   - *Couleur* : Provia (standard fidèle), Astia (douce, peaux flatteuses),
     Vivid (esprit Adobe Vivid), Velvia (diapositive saturée et contrastée) ;
   - *Film* : Classic Chrome (reportage sourd), Classic Negative (ombres

@@ -638,29 +638,34 @@ function setupThumbs() {
   syncLookUI();
   drawThumbs();
 }
+function drawThumb(c, look) {
+  c.width = thumbs.w; c.height = thumbs.h;
+  const ctx = c.getContext('2d'), img = ctx.createImageData(thumbs.w, thumbs.h);
+  const pr = makeProcessor({ ...state.params, look, lookAmount: 100 }, state.base);
+  processRGBA(pr, thumbs.src, img.data, thumbs.w * thumbs.h);
+  ctx.putImageData(img, 0, 0);
+}
+// Vignette du filtre courant ; les autres seulement quand la fenêtre des filtres est ouverte
 function drawThumbs() {
   if (!thumbs.src) return;
-  document.querySelectorAll('#lookChips .look').forEach((btn) => {
-    const c = btn.querySelector('canvas');
-    c.width = thumbs.w; c.height = thumbs.h;
-    const ctx = c.getContext('2d'), img = ctx.createImageData(thumbs.w, thumbs.h);
-    const pr = makeProcessor({ ...state.params, look: btn.dataset.look, lookAmount: 100 }, state.base);
-    processRGBA(pr, thumbs.src, img.data, thumbs.w * thumbs.h);
-    ctx.putImageData(img, 0, 0);
-  });
+  drawThumb($('#lookCurrent canvas'), state.params.look);
+  if (!$('#lookDialog').open) return;
+  document.querySelectorAll('#lookChips .look').forEach((btn) => drawThumb(btn.querySelector('canvas'), btn.dataset.look));
 }
 function syncLookUI() {
   const { look, lookAmount } = state.params;
   document.querySelectorAll('#lookChips .look').forEach((b) => {
     const on = b.dataset.look === look;
     b.classList.toggle('active', on); b.setAttribute('aria-selected', String(on));
-    if (on) b.parentElement.scrollTo({ left: b.offsetLeft - b.parentElement.clientWidth / 2 + b.offsetWidth / 2, behavior: 'smooth' });
   });
+  const lk = LOOKS[look] || LOOKS.none;
+  $('#lookCurrent .lc-name').textContent = look === 'none' ? lk.name : `${lk.name} · ${lk.group}`;
+  if (thumbs.src) drawThumb($('#lookCurrent canvas'), look);
   $('#lookAmountRow').hidden = look === 'none';
   $('#lookAmount').value = lookAmount;
   $('#lookAmountOut').textContent = `${lookAmount} %`;
 }
-// Bandeau des filtres, groupés (Couleur / Noir & blanc / Créatif)
+// Fenêtre des filtres, groupés par catégorie (défilement vertical)
 (function buildLookChips() {
   const root = $('#lookChips');
   let group = null;
@@ -671,10 +676,11 @@ function syncLookUI() {
       root.appendChild(g);
     }
     const btn = document.createElement('button');
-    btn.className = 'look'; btn.dataset.look = key; btn.setAttribute('role', 'option');
+    btn.className = 'look'; btn.type = 'button'; btn.dataset.look = key; btn.setAttribute('role', 'option');
     btn.innerHTML = '<canvas></canvas><span></span>';
     btn.querySelector('span').textContent = lk.name;
     btn.addEventListener('click', () => {
+      $('#lookDialog').close();
       if (state.params.look === key) return;
       state.params.look = key;
       lookChanged();
@@ -682,6 +688,15 @@ function syncLookUI() {
     root.appendChild(btn);
   }
 })();
+$('#lookCurrent').addEventListener('click', () => {
+  const d = $('#lookDialog');
+  d.showModal();
+  drawThumbs();
+  const act = d.querySelector('.look.active');
+  if (act) { const body = d.querySelector('.dialog-body'); body.scrollTop = act.offsetTop - body.clientHeight / 2 + act.offsetHeight / 2; }
+});
+// clic sur le fond : fermer
+$('#lookDialog').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
 let lookTimer = null;
 $('#lookAmount').addEventListener('input', (e) => {
   state.params.lookAmount = +e.target.value;

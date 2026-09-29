@@ -230,23 +230,28 @@ table.meta td:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, mon
 #clipBtn .clip-hi { color: #ffb3c0; }
 #clipBtn .clip-lo { color: #b3cfff; }
 
-/* Filtres : bandeau défilant horizontalement */
+/* Filtre courant (panneau) + fenêtre de choix des filtres */
+.look-current {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px; cursor: pointer;
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: 12px; color: var(--text);
+  font: inherit; text-align: left; touch-action: manipulation;
+}
+.look-current canvas { width: 84px; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 7px; background: #000; flex: none; }
+.look-current .lc-name { flex: 1; min-width: 0; font-weight: 600; }
+.look-current .lc-more { color: var(--accent); font-size: .85rem; flex: none; padding-right: 4px; }
+.looks-dialog { width: min(760px, 96vw); }
 .looks {
-  position: relative; display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; margin: 0 -2px;
-  scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
-  scrollbar-width: thin;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px;
+  overscroll-behavior: contain; position: relative;
 }
 .look-group {
-  flex: none; writing-mode: vertical-rl; transform: rotate(180deg); text-align: center;
-  font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-2);
-  border-left: 1px solid var(--line); padding-left: 4px; margin-left: 4px;
+  grid-column: 1 / -1; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-2);
+  padding: 10px 2px 2px; position: sticky; top: -8px; background: var(--bg-2); z-index: 1;
 }
-.look-group:first-child { border: 0; margin: 0; }
 .look {
-  flex: none; width: 92px; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 4px;
-  cursor: pointer; scroll-snap-align: center;
-  background: var(--bg-3); border: 2px solid var(--line); border-radius: 10px; color: var(--text);
-  font: inherit; font-size: .76rem; line-height: 1.15; touch-action: manipulation;
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 4px; min-width: 0;
+  cursor: pointer; background: var(--bg-3); border: 2px solid var(--line); border-radius: 10px; color: var(--text);
+  font: inherit; font-size: .78rem; line-height: 1.15; touch-action: manipulation;
 }
 .look canvas { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 6px; background: #000; display: block; }
 .look span { min-height: 2.3em; display: flex; align-items: center; justify-content: center; text-align: center; }
